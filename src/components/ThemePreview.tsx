@@ -1,5 +1,5 @@
 import { Moon, Sparkles } from "lucide-react";
-import { ThemeSettings } from "../models/launcher";
+import { ThemeSettings } from "../models/settings";
 import Button from "./ui/Button";
 import Card from "./ui/Card";
 import StatusBadge from "./StatusBadge";
@@ -22,7 +22,7 @@ export default function ThemePreview({ theme }: ThemePreviewProps) {
       </div>
       <div className="preview-copy">
         <h3>Galaxy control surface</h3>
-        <p>Accent color, glow and density are wired for local storage.</p>
+        <p>Accent color is saved locally and applied across controls, cards and status highlights.</p>
       </div>
       <Button icon={<Sparkles size={16} />}>Primary action</Button>
     </Card>

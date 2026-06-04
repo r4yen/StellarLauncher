@@ -1,7 +1,5 @@
-import { Save } from "lucide-react";
-import { FormEvent, useState } from "react";
-import { LauncherSettings } from "../models/launcher";
-import Button from "./ui/Button";
+import { useEffect, useState } from "react";
+import { LauncherSettings } from "../models/settings";
 import Card from "./ui/Card";
 
 interface SettingsFormProps {
@@ -12,22 +10,49 @@ interface SettingsFormProps {
 export default function SettingsForm({ settings, onSave }: SettingsFormProps) {
   const [form, setForm] = useState(settings);
 
-  const updateField = (field: keyof LauncherSettings, value: string | number) => {
-    setForm((current) => ({ ...current, [field]: value }));
-  };
+  useEffect(() => {
+    setForm(settings);
+  }, [settings]);
 
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault();
-    onSave(form);
+  const updateField = (field: keyof LauncherSettings, value: string | number) => {
+    setForm((current) => {
+      const next = { ...current, [field]: value };
+      onSave(next);
+      return next;
+    });
   };
 
   return (
     <Card className="settings-form">
-      <form onSubmit={handleSubmit}>
+      <div className="settings-form-fields">
         <label>
           Java path
           <input value={form.javaPath} onChange={(event) => updateField("javaPath", event.target.value)} />
         </label>
+        <div className="settings-subsection">
+          <div>
+            <h3>Default Java paths</h3>
+            <p>Store the Java executables used by different Minecraft generations.</p>
+          </div>
+          <div className="java-path-grid">
+            <label>
+              Java 8
+              <input value={form.java8Path} onChange={(event) => updateField("java8Path", event.target.value)} />
+            </label>
+            <label>
+              Java 17
+              <input value={form.java17Path} onChange={(event) => updateField("java17Path", event.target.value)} />
+            </label>
+            <label>
+              Java 21
+              <input value={form.java21Path} onChange={(event) => updateField("java21Path", event.target.value)} />
+            </label>
+            <label>
+              Java 25
+              <input value={form.java25Path} onChange={(event) => updateField("java25Path", event.target.value)} />
+            </label>
+          </div>
+        </div>
         <label>
           Default RAM
           <input
@@ -50,13 +75,15 @@ export default function SettingsForm({ settings, onSave }: SettingsFormProps) {
           Launcher folder
           <input value={form.launcherFolder} onChange={(event) => updateField("launcherFolder", event.target.value)} />
         </label>
-        <div className="form-footer">
-          <span>Settings are persisted through the local storage service and ready for a Tauri config backend.</span>
-          <Button icon={<Save size={16} />} type="submit">
-            Save settings
-          </Button>
-        </div>
-      </form>
+        <label>
+          Minecraft storage directory
+          <input
+            value={form.minecraftStorageDirectory}
+            onChange={(event) => updateField("minecraftStorageDirectory", event.target.value)}
+          />
+          <small>Local Minecraft files, version metadata, libraries and assets will be prepared under this folder.</small>
+        </label>
+      </div>
     </Card>
   );
 }

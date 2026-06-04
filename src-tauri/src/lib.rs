@@ -1,27 +1,17 @@
-use serde::{Deserialize, Serialize};
+mod auth;
+mod instances;
+mod mods;
+mod storage;
+
+use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct LauncherStatus {
     version: String,
     java_detected: bool,
     storage_ready: bool,
     config_path: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct LaunchResponse {
-    state: String,
-    message: String,
-    instance_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LaunchRequest {
-    instance_id: String,
-    java_path: Option<String>,
-    game_directory: Option<String>,
-    ram_mb: Option<u32>,
-    jvm_args: Option<String>,
 }
 
 #[tauri::command]
@@ -34,26 +24,37 @@ fn get_launcher_status() -> LauncherStatus {
     }
 }
 
-#[tauri::command]
-fn start_mock_launch(instance_id: String) -> LaunchResponse {
-    LaunchResponse {
-        state: "preparing".to_string(),
-        message: "Preparing launch plan through Tauri command".to_string(),
-        instance_id,
-    }
-}
-
-#[tauri::command]
-fn build_launch_request(request: LaunchRequest) -> LaunchRequest {
-    request
-}
-
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .manage(auth::AuthState::default())
         .invoke_handler(tauri::generate_handler![
             get_launcher_status,
-            start_mock_launch,
-            build_launch_request
+            instances::build_launch_request,
+            instances::ensure_minecraft_files,
+            instances::start_minecraft_process,
+            instances::stop_minecraft_process,
+            instances::is_minecraft_process_running,
+            instances::read_launch_log_tail,
+            mods::list_mods,
+            mods::set_mod_enabled,
+            mods::delete_mod,
+            mods::add_mod_file,
+            storage::load_accounts,
+            storage::save_accounts,
+            storage::load_instances,
+            storage::save_instances,
+            storage::load_settings,
+            storage::save_settings,
+            storage::load_theme,
+            storage::save_theme,
+            storage::load_minecraft_cache,
+            storage::save_minecraft_cache,
+            auth::begin_ms_device_login,
+            auth::poll_ms_device_login,
+            auth::refresh_minecraft_account,
+            auth::remove_account_tokens,
+            auth::open_external_url
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Stellar Launcher");

@@ -1,21 +1,23 @@
 import { Home, MonitorCog, Palette, Server, Users } from "lucide-react";
+import { t, Language } from "../i18n";
 import { PageKey } from "../models/launcher";
 import Logo from "./Logo";
 
 interface SidebarProps {
   activePage: PageKey;
+  language: Language;
   onNavigate: (page: PageKey) => void;
 }
 
-const navItems: Array<{ key: PageKey; label: string; icon: typeof Home }> = [
-  { key: "home", label: "Home", icon: Home },
-  { key: "instances", label: "Instances", icon: Server },
-  { key: "accounts", label: "Accounts", icon: Users },
-  { key: "theme", label: "Theme", icon: Palette },
-  { key: "settings", label: "Settings", icon: MonitorCog }
+const navItems: Array<{ key: PageKey; labelKey: "home" | "instances" | "accounts" | "theme" | "settings"; icon: typeof Home }> = [
+  { key: "home", labelKey: "home", icon: Home },
+  { key: "instances", labelKey: "instances", icon: Server },
+  { key: "accounts", labelKey: "accounts", icon: Users },
+  { key: "theme", labelKey: "theme", icon: Palette },
+  { key: "settings", labelKey: "settings", icon: MonitorCog }
 ];
 
-export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
+export default function Sidebar({ activePage, language, onNavigate }: SidebarProps) {
   return (
     <aside className="sidebar">
       <Logo size="sm" />
@@ -30,14 +32,14 @@ export default function Sidebar({ activePage, onNavigate }: SidebarProps) {
               type="button"
             >
               <Icon size={18} />
-              <span>{item.label}</span>
+              <span>{t(language, item.labelKey)}</span>
             </button>
           );
         })}
       </nav>
       <div className="sidebar-footer">
-        <span>Local mock mode</span>
-        <strong>v0.1.0</strong>
+        <span>{t(language, "localMode")}</span>
+        <strong>v1.0.1</strong>
       </div>
     </aside>
   );

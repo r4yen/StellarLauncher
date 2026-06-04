@@ -1,4 +1,4 @@
-import { LauncherSettings, ThemeSettings } from "../models/launcher";
+import { LauncherSettings, ThemeSettings } from "../models/settings";
 
 const themeKey = "stellarlauncher.theme";
 const settingsKey = "stellarlauncher.settings";

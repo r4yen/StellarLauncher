@@ -2,7 +2,7 @@ import { Plus } from "lucide-react";
 import AccountCard from "../components/AccountCard";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
-import { Account } from "../models/launcher";
+import { Account } from "../models/account";
 
 interface AccountsPageProps {
   accounts: Account[];

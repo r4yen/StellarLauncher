@@ -1,7 +1,7 @@
 import { Plus } from "lucide-react";
 import InstanceCard from "../components/InstanceCard";
 import Button from "../components/ui/Button";
-import { Instance, LaunchStatus } from "../models/launcher";
+import { Instance, LaunchStatus } from "../models/instance";
 
 interface InstancesPageProps {
   instances: Instance[];
