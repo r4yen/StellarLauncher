@@ -16,6 +16,7 @@ export interface Instance {
   jvmArgs: string;
   createdAt: string;
   lastPlayedAt?: string;
+  playtimeSeconds?: number;
   status: InstanceStatus;
   icon: string;
   isFavorite?: boolean;

@@ -1,10 +1,11 @@
-import { ChevronDown, DownloadCloud } from "lucide-react";
+import { ChevronDown, DownloadCloud, Trash2 } from "lucide-react";
 import { DownloadTask } from "../models/download";
 
 interface DownloadStatusPanelProps {
   open: boolean;
   panelOnly?: boolean;
   tasks: DownloadTask[];
+  onDismissTask?: (taskId: string) => void;
   onToggleOpen: () => void;
 }
 
@@ -16,13 +17,13 @@ function formatEta(seconds?: number) {
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
 }
 
-export default function DownloadStatusPanel({ open, panelOnly = false, tasks, onToggleOpen }: DownloadStatusPanelProps) {
+export default function DownloadStatusPanel({ open, panelOnly = false, tasks, onDismissTask, onToggleOpen }: DownloadStatusPanelProps) {
   const activeTasks = tasks.filter((task) => task.status !== "completed").length;
 
   if (panelOnly && !open) return null;
 
   return (
-    <aside className={open ? "download-status-panel download-status-panel-open" : "download-status-panel"} aria-label="Download status">
+    <aside className={open ? "download-status-panel download-status-panel-open" : "download-status-panel"} data-download-panel aria-label="Download status">
       {!panelOnly ? (
         <button className="download-status-header" onClick={onToggleOpen} type="button">
           <span>
@@ -45,7 +46,14 @@ export default function DownloadStatusPanel({ open, panelOnly = false, tasks, on
                     <strong>{task.instanceName}</strong>
                     <span>{task.label}</span>
                   </div>
-                  <small>{task.status}</small>
+                  <div className="download-task-status">
+                    <small>{task.status}</small>
+                    {task.status === "completed" ? (
+                      <button type="button" aria-label={`Remove ${task.label} from downloads`} onClick={() => onDismissTask?.(task.id)}>
+                        <Trash2 size={13} />
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="download-progress-track">
                   <div className="download-progress-fill" style={{ width: `${task.percent}%` }} />

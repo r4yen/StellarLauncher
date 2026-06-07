@@ -446,10 +446,14 @@ pub fn start_minecraft_process(request: StartMinecraftRequest) -> Result<Process
 #[tauri::command]
 pub fn stop_minecraft_process(process_id: u32) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    let status = Command::new("taskkill")
-        .args(["/PID", &process_id.to_string(), "/T", "/F"])
-        .status()
-        .map_err(|error| format!("Cannot stop process {process_id}: {error}"))?;
+    let status = {
+        let mut command = Command::new("taskkill");
+        command.args(["/PID", &process_id.to_string(), "/T", "/F"]);
+        command.creation_flags(CREATE_NO_WINDOW);
+        command
+            .status()
+            .map_err(|error| format!("Cannot stop process {process_id}: {error}"))?
+    };
 
     #[cfg(not(target_os = "windows"))]
     let status = Command::new("kill")
@@ -468,8 +472,10 @@ pub fn stop_minecraft_process(process_id: u32) -> Result<(), String> {
 pub fn is_minecraft_process_running(process_id: u32) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        let output = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {process_id}"), "/NH"])
+        let mut command = Command::new("tasklist");
+        command.args(["/FI", &format!("PID eq {process_id}"), "/NH"]);
+        command.creation_flags(CREATE_NO_WINDOW);
+        let output = command
             .output()
             .map_err(|error| format!("Cannot inspect process {process_id}: {error}"))?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();

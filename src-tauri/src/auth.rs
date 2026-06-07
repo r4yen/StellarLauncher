@@ -198,8 +198,14 @@ fn read_token_bundle(account_id: &str) -> Result<String, String> {
 
 #[tauri::command]
 pub fn open_external_url(url: String) -> Result<(), String> {
-    if !url.starts_with("https://www.microsoft.com/link") {
-        return Err("Only Microsoft device login links can be opened from this command.".to_string());
+    let allowed = [
+        "https://www.microsoft.com/link",
+        "https://github.com/r4yen/StellarLauncher/",
+        "https://discord.gg/8kMmj8Vb9Q",
+    ];
+
+    if !allowed.iter().any(|prefix| url.starts_with(prefix)) {
+        return Err("This external link is not allowed.".to_string());
     }
 
     #[cfg(target_os = "windows")]
@@ -225,7 +231,7 @@ pub fn open_external_url(url: String) -> Result<(), String> {
 
     command
         .spawn()
-        .map_err(|error| format!("Cannot open Microsoft login link: {error}"))?;
+        .map_err(|error| format!("Cannot open external link: {error}"))?;
     Ok(())
 }
 

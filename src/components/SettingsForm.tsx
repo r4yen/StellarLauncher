@@ -1,20 +1,24 @@
 import { useEffect, useState } from "react";
 import { LauncherSettings } from "../models/settings";
+import Button from "./ui/Button";
 import Card from "./ui/Card";
 
 interface SettingsFormProps {
+  javaSetupBusy?: boolean;
+  javaSetupStatus?: string;
   settings: LauncherSettings;
   onSave: (settings: LauncherSettings) => void;
+  onSetupJava?: () => void;
 }
 
-export default function SettingsForm({ settings, onSave }: SettingsFormProps) {
+export default function SettingsForm({ javaSetupBusy = false, javaSetupStatus, settings, onSave, onSetupJava }: SettingsFormProps) {
   const [form, setForm] = useState(settings);
 
   useEffect(() => {
     setForm(settings);
   }, [settings]);
 
-  const updateField = (field: keyof LauncherSettings, value: string | number) => {
+  const updateField = (field: keyof LauncherSettings, value: string | number | boolean) => {
     setForm((current) => {
       const next = { ...current, [field]: value };
       onSave(next);
@@ -25,15 +29,35 @@ export default function SettingsForm({ settings, onSave }: SettingsFormProps) {
   return (
     <Card className="settings-form">
       <div className="settings-form-fields">
-        <label>
-          Java path
-          <input value={form.javaPath} onChange={(event) => updateField("javaPath", event.target.value)} />
-        </label>
+        <div className="settings-subsection">
+          <div>
+            <h3>Discord Rich Presence</h3>
+            <p>Show the currently running Minecraft instance in Discord. Enabled by default.</p>
+          </div>
+          <label className="toggle-row">
+            <input
+              checked={form.discordRichPresenceEnabled}
+              type="checkbox"
+              onChange={(event) => updateField("discordRichPresenceEnabled", event.target.checked)}
+            />
+            Enable Discord Rich Presence
+          </label>
+        </div>
         <div className="settings-subsection">
           <div>
             <h3>Default Java paths</h3>
-            <p>Store the Java executables used by different Minecraft generations.</p>
+            <p>The launcher automatically chooses the matching Java executable for each Minecraft version.</p>
           </div>
+          <div className="settings-action-row">
+            <div>
+              <strong>Local Adoptium setup</strong>
+              <span>Downloads Java 8, 17, 21 and 25 into the launcher folder.</span>
+            </div>
+            <Button disabled={javaSetupBusy} onClick={onSetupJava} type="button" variant="secondary">
+              {javaSetupBusy ? "Installing Java..." : "Setup Adoptium Java"}
+            </Button>
+          </div>
+          {javaSetupStatus ? <small>{javaSetupStatus}</small> : null}
           <div className="java-path-grid">
             <label>
               Java 8

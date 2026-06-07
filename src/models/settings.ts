@@ -3,7 +3,6 @@ export interface ThemeSettings {
 }
 
 export interface LauncherSettings {
-  javaPath: string;
   java8Path: string;
   java17Path: string;
   java21Path: string;
@@ -14,6 +13,7 @@ export interface LauncherSettings {
   launcherFolder: string;
   minecraftStorageDirectory: string;
   language: "en" | "de";
+  discordRichPresenceEnabled: boolean;
 }
 
 export interface LauncherStatusSummary {

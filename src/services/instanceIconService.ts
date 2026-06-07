@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 const LOCAL_FILE_PREFIX = "local-file:";
 
@@ -15,4 +15,8 @@ export function resolveInstanceIconSrc(icon: string | undefined): string | undef
 
 export function isColorInstanceIcon(icon: string | undefined): boolean {
   return Boolean(icon && /^#[0-9a-f]{6}$/i.test(icon));
+}
+
+export async function copyInstanceIcon(sourcePath: string): Promise<string> {
+  return invoke<string>("copy_instance_icon", { sourcePath });
 }

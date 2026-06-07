@@ -1,18 +1,28 @@
 import { ExternalLink, KeyRound, Loader2, Plus, UserRoundPlus, X } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import AccountCard from "../components/AccountCard";
+import AccountSkinLibraryModal from "../components/AccountSkinLibraryModal";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import { Language, t } from "../i18n";
 import { Account, DeviceLoginStart } from "../models/account";
+import { SkinLibraryItem } from "../models/skin";
 import { beginMicrosoftDeviceLogin, openExternalUrl, pollMicrosoftDeviceLogin } from "../services/authService";
+import { canMoveAccount } from "../services/accountService";
 
 interface AccountsProps {
   accounts: Account[];
+  skins: SkinLibraryItem[];
   language: Language;
   storageError?: string;
   onAccountLoggedIn: (account: Account) => void;
   onCreateOfflineAccount: (name: string) => void;
+  onAddSkin: (name: string) => void;
+  onChangeAccountSkin: (accountId: string, skinId: string) => void;
+  onMoveSkin: (skinId: string, direction: -1 | 1) => void;
+  onRemoveSkin: (skinId: string) => void;
+  onRenameSkin: (skinId: string, name: string) => void;
+  onToggleSkinFavorite: (skinId: string) => void;
   onToggleFavorite: (accountId: string) => void;
   onMoveAccount: (accountId: string, direction: -1 | 1) => void;
   onRemoveAccount: (accountId: string) => void;
@@ -21,10 +31,17 @@ interface AccountsProps {
 
 export default function Accounts({
   accounts,
+  skins,
   language,
   storageError,
   onAccountLoggedIn,
   onCreateOfflineAccount,
+  onAddSkin,
+  onChangeAccountSkin,
+  onMoveSkin,
+  onRemoveSkin,
+  onRenameSkin,
+  onToggleSkinFavorite,
   onToggleFavorite,
   onMoveAccount,
   onRemoveAccount,
@@ -36,6 +53,8 @@ export default function Accounts({
   const [offlineName, setOfflineName] = useState("Player");
   const [offlineError, setOfflineError] = useState<string | undefined>();
   const [polling, setPolling] = useState(false);
+  const [skinAccountId, setSkinAccountId] = useState<string | undefined>();
+  const skinAccount = accounts.find((account) => account.id === skinAccountId);
 
   const startLogin = async () => {
     setLoginError(undefined);
@@ -175,6 +194,9 @@ export default function Accounts({
             <AccountCard
               key={account.id}
               account={account}
+              canMoveDown={canMoveAccount(accounts, account.id, 1)}
+              canMoveUp={canMoveAccount(accounts, account.id, -1)}
+              onOpenSkinLibrary={setSkinAccountId}
               onRemoveAccount={onRemoveAccount}
               onToggleFavorite={onToggleFavorite}
               onMove={onMoveAccount}
@@ -188,6 +210,19 @@ export default function Accounts({
           </Card>
         )}
       </div>
+
+      <AccountSkinLibraryModal
+        account={skinAccount}
+        open={Boolean(skinAccount)}
+        skins={skins}
+        onAddSkin={onAddSkin}
+        onChangeAccountSkin={onChangeAccountSkin}
+        onClose={() => setSkinAccountId(undefined)}
+        onMoveSkin={onMoveSkin}
+        onRemoveSkin={onRemoveSkin}
+        onRenameSkin={onRenameSkin}
+        onToggleSkinFavorite={onToggleSkinFavorite}
+      />
     </div>
   );
 }

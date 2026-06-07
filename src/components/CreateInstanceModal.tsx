@@ -1,5 +1,6 @@
 import { ImagePlus, X } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { CreateInstanceInput, Instance, LoaderType } from "../models/instance";
 import { LauncherSettings } from "../models/settings";
 import { getLoaderVersions, loaderLabels, LoaderVersion } from "../services/loaderServices";
@@ -22,6 +23,11 @@ interface CreateInstanceModalProps {
 const loaderTypes: LoaderType[] = ["vanilla", "fabric", "forge", "neoforge", "quilt"];
 const defaultInstanceIcon = "#64748b";
 
+function defaultProfileDirectory(instanceName: string): string {
+  const profileName = instanceName.trim().replace(/[<>:"/\\|?*]/g, "-") || "<Instance Name>";
+  return `%APPDATA%\\StellarLauncher\\profiles\\${profileName}`;
+}
+
 export default function CreateInstanceModal({ editingInstance, open, settings, onClose, onCreate, onUpdate }: CreateInstanceModalProps) {
   const [versions, setVersions] = useState<MinecraftVersion[]>([]);
   const [loaderVersions, setLoaderVersions] = useState<LoaderVersion[]>([]);
@@ -34,7 +40,7 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
     minecraftVersion: "1.21.5",
     loaderType: "vanilla",
     loaderVersion: "",
-    gameDirectory: settings.gameDirectory,
+    gameDirectory: "",
     javaPath: "",
     ramMb: settings.defaultRamMb,
     jvmArgs: settings.jvmArgs,
@@ -65,7 +71,7 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
             minecraftVersion: "1.21.5",
             loaderType: "vanilla",
             loaderVersion: "",
-            gameDirectory: settings.gameDirectory,
+            gameDirectory: "",
             javaPath: "",
             ramMb: settings.defaultRamMb,
             jvmArgs: settings.jvmArgs,
@@ -125,7 +131,14 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
     };
   }, [form.loaderType, form.minecraftVersion, open]);
 
-  const canSubmit = useMemo(() => validateInstanceInput(form).length === 0, [form]);
+  const submitInput = useMemo(
+    () => ({
+      ...form,
+      gameDirectory: form.gameDirectory.trim() || defaultProfileDirectory(form.name)
+    }),
+    [form]
+  );
+  const canSubmit = useMemo(() => validateInstanceInput(submitInput).length === 0, [submitInput]);
   const versionOptions = (versions.length ? versions : [{ id: form.minecraftVersion, type: "release" as const }]).map((version) => ({
     value: version.id,
     label: version.id,
@@ -143,17 +156,17 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
-    const validationErrors = validateInstanceInput(form);
+    const validationErrors = validateInstanceInput(submitInput);
     setErrors(validationErrors);
     if (validationErrors.length > 0) return;
-    if (editingInstance && onUpdate) onUpdate(editingInstance.id, form);
-    else onCreate(form);
+    if (editingInstance && onUpdate) onUpdate(editingInstance.id, submitInput);
+    else onCreate(submitInput);
     onClose();
   };
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Create new instance">
       <Card className="create-modal" tone="bright">
         <div className="modal-header">
@@ -217,17 +230,22 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
             </label>
           ) : null}
           <label>
-            Game Directory
-            <input value={form.gameDirectory} onChange={(event) => updateField("gameDirectory", event.target.value)} />
+            Game Directory override
+            <input
+              placeholder={defaultProfileDirectory(form.name)}
+              value={form.gameDirectory}
+              onChange={(event) => updateField("gameDirectory", event.target.value)}
+            />
+            <small>Leave empty to use the default profile folder.</small>
           </label>
           <label>
             Java path override
             <input
-              placeholder={settings.javaPath ? `Uses settings default: ${settings.javaPath}` : "Uses settings default Java path"}
+              placeholder="Automatically uses Java 8, 17, 21, or 25 from Settings"
               value={form.javaPath}
               onChange={(event) => updateField("javaPath", event.target.value)}
             />
-            <small>Leave empty to use the default Java path from Settings.</small>
+            <small>Leave empty to let the launcher choose the Java path from the Minecraft version.</small>
           </label>
           <label>
             JVM arguments
@@ -265,6 +283,7 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
         onClose={() => setImagePickerOpen(false)}
         onSelect={(icon) => updateField("icon", icon)}
       />
-    </div>
+    </div>,
+    document.body
   );
 }

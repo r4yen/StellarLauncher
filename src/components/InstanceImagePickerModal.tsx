@@ -1,9 +1,10 @@
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Link2, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Instance } from "../models/instance";
 import { ModFile } from "../models/mod";
-import { localInstanceIcon, resolveInstanceIconSrc } from "../services/instanceIconService";
+import { copyInstanceIcon, localInstanceIcon, resolveInstanceIconSrc } from "../services/instanceIconService";
 import { listMods } from "../services/modService";
 import Button from "./ui/Button";
 import Card from "./ui/Card";
@@ -68,12 +69,17 @@ export default function InstanceImagePickerModal({ instance, open, currentIcon, 
       filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }]
     });
     if (typeof selected !== "string") return;
-    onSelect(localInstanceIcon(selected));
-    onClose();
+    try {
+      const copiedPath = await copyInstanceIcon(selected);
+      onSelect(localInstanceIcon(copiedPath));
+      onClose();
+    } catch (copyError) {
+      setError(copyError instanceof Error ? copyError.message : String(copyError));
+    }
   };
 
-  return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Choose instance image">
+  return createPortal(
+    <div className="modal-backdrop modal-backdrop-subwindow" role="dialog" aria-modal="true" aria-label="Choose instance image">
       <Card className="image-picker-modal" tone="bright">
         <div className="modal-header">
           <div>
@@ -127,6 +133,7 @@ export default function InstanceImagePickerModal({ instance, open, currentIcon, 
 
         {error ? <div className="error-panel">{error}</div> : null}
       </Card>
-    </div>
+    </div>,
+    document.body
   );
 }

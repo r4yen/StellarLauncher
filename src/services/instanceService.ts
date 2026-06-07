@@ -18,6 +18,7 @@ export async function createInstance(instances: Instance[], input: CreateInstanc
     id,
     createdAt,
     lastPlayedAt: undefined,
+    playtimeSeconds: 0,
     isFavorite: false,
     order: 0,
     status: input.name.trim() && input.minecraftVersion.trim() ? "ready" : "incomplete",
@@ -95,6 +96,56 @@ export function canMoveInstance(instances: Instance[], instanceId: string, direc
   const target = index + direction;
   if (index < 0 || target < 0 || target >= sorted.length) return false;
   return Boolean(sorted[index].isFavorite) === Boolean(sorted[target].isFavorite);
+}
+
+export function formatPlaytime(totalSeconds = 0): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const units = [
+    { label: "day", seconds: 86400 },
+    { label: "hour", seconds: 3600 },
+    { label: "minute", seconds: 60 },
+    { label: "second", seconds: 1 }
+  ];
+  const parts: string[] = [];
+  let remaining = seconds;
+
+  for (const unit of units) {
+    const value = Math.floor(remaining / unit.seconds);
+    if (value <= 0 && parts.length === 0 && unit.label !== "second") continue;
+    if (value > 0 || unit.label === "second") {
+      parts.push(`${value} ${unit.label}${value === 1 ? "" : "s"}`);
+      remaining -= value * unit.seconds;
+    }
+    if (parts.length === 2) break;
+  }
+
+  return parts.join(" ");
+}
+
+export function formatCompactPlaytime(totalSeconds = 0): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const units = [
+    { label: "y", seconds: 31536000 },
+    { label: "w", seconds: 604800 },
+    { label: "d", seconds: 86400 },
+    { label: "h", seconds: 3600 },
+    { label: "min", seconds: 60 },
+    { label: "sec", seconds: 1 }
+  ];
+  const parts: string[] = [];
+  let remaining = seconds;
+
+  for (const unit of units) {
+    const value = Math.floor(remaining / unit.seconds);
+    if (value <= 0 && parts.length === 0 && unit.label !== "sec") continue;
+    if (value > 0 || unit.label === "sec") {
+      parts.push(`${value}${unit.label}`);
+      remaining -= value * unit.seconds;
+    }
+    if (parts.length === 2) break;
+  }
+
+  return parts.join(" ");
 }
 
 export function validateInstanceInput(input: CreateInstanceInput): string[] {

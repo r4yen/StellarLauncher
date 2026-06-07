@@ -1,11 +1,15 @@
 use base64::{engine::general_purpose, Engine};
+use futures_util::StreamExt;
+use reqwest::Client;
 use serde::Serialize;
+use sha1::{Digest, Sha1};
 use serde_json::Value;
 use std::{
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
+use tauri::{AppHandle, Emitter};
 use zip::ZipArchive;
 
 #[derive(Debug, Clone, Serialize)]
@@ -13,11 +17,23 @@ use zip::ZipArchive;
 pub struct ModFile {
     file_name: String,
     path: String,
+    sha1: String,
     enabled: bool,
     name: String,
     version: String,
     authors: Vec<String>,
     icon_data_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModDownloadProgress {
+    operation_id: String,
+    status: String,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    file_name: String,
+    target_path: String,
 }
 
 #[tauri::command]
@@ -82,12 +98,80 @@ pub fn add_mod_file(game_directory: String, source_path: String) -> Result<ModFi
     read_mod_file(&target)
 }
 
+#[tauri::command]
+pub async fn install_modrinth_mod(
+    app: AppHandle,
+    game_directory: String,
+    download_url: String,
+    file_name: String,
+    replace_path: Option<String>,
+    operation_id: Option<String>,
+) -> Result<ModFile, String> {
+    let mods_dir = PathBuf::from(expand_path(&game_directory)).join("mods");
+    fs::create_dir_all(&mods_dir).map_err(|error| format!("Cannot create mods directory {}: {error}", mods_dir.display()))?;
+
+    let safe_name = sanitize_file_name(&file_name);
+    if !safe_name.ends_with(".jar") {
+        return Err("Modrinth download did not provide a .jar file.".to_string());
+    }
+    let operation_id = operation_id.unwrap_or_else(|| format!("modrinth-{}", chrono::Utc::now().timestamp_millis()));
+    let target = unique_target_path(&mods_dir, &safe_name);
+
+    emit_mod_progress(&app, &operation_id, "pending", 0, None, &safe_name, &target);
+
+    let response = Client::new()
+        .get(&download_url)
+        .send()
+        .await
+        .map_err(|error| format!("Cannot download Modrinth mod: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Modrinth mod download failed: {error}"))?;
+    let total_bytes = response.content_length();
+    let mut downloaded_bytes = 0_u64;
+    let mut output = fs::File::create(&target).map_err(|error| format!("Cannot create Modrinth mod {}: {error}", target.display()))?;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|error| format!("Cannot read Modrinth mod download: {error}"))?;
+        output
+            .write_all(&bytes)
+            .map_err(|error| format!("Cannot write Modrinth mod {}: {error}", target.display()))?;
+        downloaded_bytes += bytes.len() as u64;
+        emit_mod_progress(&app, &operation_id, "downloading", downloaded_bytes, total_bytes, &safe_name, &target);
+    }
+
+    if let Some(old_path) = replace_path {
+        let old = PathBuf::from(old_path);
+        if old.exists() && old != target {
+            let _ = fs::remove_file(old);
+        }
+    }
+
+    emit_mod_progress(&app, &operation_id, "completed", downloaded_bytes, total_bytes, &safe_name, &target);
+    read_mod_file(&target)
+}
+
+fn emit_mod_progress(app: &AppHandle, operation_id: &str, status: &str, downloaded_bytes: u64, total_bytes: Option<u64>, file_name: &str, target_path: &Path) {
+    let _ = app.emit(
+        "mod-download-progress",
+        ModDownloadProgress {
+            operation_id: operation_id.to_string(),
+            status: status.to_string(),
+            downloaded_bytes,
+            total_bytes,
+            file_name: file_name.to_string(),
+            target_path: target_path.to_string_lossy().to_string(),
+        },
+    );
+}
+
 fn read_mod_file(path: &Path) -> Result<ModFile, String> {
     let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("unknown.jar").to_string();
     let enabled = file_name.ends_with(".jar");
     let mut mod_file = ModFile {
         file_name: file_name.clone(),
         path: path.to_string_lossy().to_string(),
+        sha1: file_sha1(path)?,
         enabled,
         name: file_name.trim_end_matches(".disabled").trim_end_matches(".jar").to_string(),
         version: "unknown".to_string(),
@@ -112,6 +196,46 @@ fn read_mod_file(path: &Path) -> Result<ModFile, String> {
     }
 
     Ok(mod_file)
+}
+
+fn file_sha1(path: &Path) -> Result<String, String> {
+    let mut file = fs::File::open(path).map_err(|error| format!("Cannot open mod file {}: {error}", path.display()))?;
+    let mut hasher = Sha1::new();
+    let mut buffer = [0_u8; 64 * 1024];
+
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| format!("Cannot hash mod file {}: {error}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn sanitize_file_name(file_name: &str) -> String {
+    file_name
+        .chars()
+        .map(|character| if character.is_ascii_alphanumeric() || ".-_+[]() ".contains(character) { character } else { '-' })
+        .collect::<String>()
+}
+
+fn unique_target_path(mods_dir: &Path, file_name: &str) -> PathBuf {
+    let mut target = mods_dir.join(file_name);
+    if !target.exists() {
+        return target;
+    }
+
+    let stem = file_name.trim_end_matches(".jar");
+    for index in 1..1000 {
+        target = mods_dir.join(format!("{stem}-{index}.jar"));
+        if !target.exists() {
+            return target;
+        }
+    }
+
+    mods_dir.join(format!("{stem}-{}.jar", chrono::Utc::now().timestamp_millis()))
 }
 
 fn read_json_entry(archive: &mut ZipArchive<fs::File>, name: &str) -> Option<Value> {

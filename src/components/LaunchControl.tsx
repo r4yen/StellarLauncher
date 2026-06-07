@@ -4,6 +4,8 @@ import { Language, t } from "../i18n";
 import { Account } from "../models/account";
 import { Instance, RunningInstance } from "../models/instance";
 import { minecraftHeadUrl } from "../services/avatarService";
+import { isColorInstanceIcon, resolveInstanceIconSrc } from "../services/instanceIconService";
+import { loaderLabels } from "../services/loaderServices";
 import Button from "./ui/Button";
 import Card from "./ui/Card";
 import CustomSelect from "./ui/CustomSelect";
@@ -45,8 +47,11 @@ export default function LaunchControl({ accounts, instances, language, runningIn
     value: instance.id,
     label: instance.name,
     description: runningInstances.some((running) => running.instance.id === instance.id)
-      ? `${instance.minecraftVersion} - ${instance.loaderType} - Running`
-      : `${instance.minecraftVersion} - ${instance.loaderType}`
+      ? `${instance.minecraftVersion} - ${loaderLabels[instance.loaderType]} - Running`
+      : `${instance.minecraftVersion} - ${loaderLabels[instance.loaderType]}`,
+    imageUrl: resolveInstanceIconSrc(instance.icon),
+    imageAlt: `${instance.name} icon`,
+    color: isColorInstanceIcon(instance.icon) ? instance.icon : undefined
   }));
   const accountOptions = accounts.map((account) => ({
     value: account.id,

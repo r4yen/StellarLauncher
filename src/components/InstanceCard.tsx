@@ -1,6 +1,7 @@
-import { ArrowDown, ArrowUp, Edit3, FolderOpen, Package, Play, Square, Star, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Edit3, FileUp, FolderOpen, Package, Play, Square, Star, Trash2 } from "lucide-react";
 import { Instance, LaunchStatus, RunningInstance } from "../models/instance";
 import { isColorInstanceIcon, resolveInstanceIconSrc } from "../services/instanceIconService";
+import { formatPlaytime } from "../services/instanceService";
 import { loaderLabels } from "../services/loaderServices";
 import Button from "./ui/Button";
 import Card from "./ui/Card";
@@ -11,6 +12,7 @@ interface InstanceCardProps {
   launchStatus: LaunchStatus;
   onEdit?: (instance: Instance) => void;
   onDelete?: (instanceId: string) => void;
+  onExport?: (instance: Instance) => void;
   onToggleFavorite?: (instanceId: string) => void;
   onMove?: (instanceId: string, direction: -1 | 1) => void;
   onOpenMods?: (instance: Instance) => void;
@@ -26,6 +28,7 @@ export default function InstanceCard({
   launchStatus,
   onEdit,
   onDelete,
+  onExport,
   onToggleFavorite,
   onMove,
   onOpenMods,
@@ -41,6 +44,26 @@ export default function InstanceCard({
 
   return (
     <Card className={instance.isFavorite ? "instance-card instance-card-favorite" : "instance-card"}>
+      <div className="order-tools card-side-order-tools">
+        <button
+          className="icon-button"
+          disabled={!canMoveUp}
+          onClick={() => onMove?.(instance.id, -1)}
+          type="button"
+          aria-label="Move instance up"
+        >
+          <ArrowUp size={16} />
+        </button>
+        <button
+          className="icon-button"
+          disabled={!canMoveDown}
+          onClick={() => onMove?.(instance.id, 1)}
+          type="button"
+          aria-label="Move instance down"
+        >
+          <ArrowDown size={16} />
+        </button>
+      </div>
       <div className="entity-title-row">
         <div className="instance-title-cluster">
           {iconSrc ? (
@@ -71,7 +94,7 @@ export default function InstanceCard({
         <span>Loader <strong>{loaderLabels[instance.loaderType]}</strong></span>
         <span>Loader build <strong>{instance.loaderVersion || "Native"}</strong></span>
         <span>RAM <strong>{Math.round(instance.ramMb / 1024)} GB</strong></span>
-        <span>Last start <strong>{instance.lastPlayedAt ? new Date(instance.lastPlayedAt).toLocaleString() : "Never"}</strong></span>
+        <span>Playtime <strong>{formatPlaytime(instance.playtimeSeconds)}</strong></span>
       </div>
 
       <div className="path-line">
@@ -82,7 +105,7 @@ export default function InstanceCard({
       <div className="card-bottom-actions">
         <div className="card-action-left">
           {isRunning && runningInstance ? (
-            <Button icon={<Square size={16} />} variant="secondary" onClick={() => onStop?.(runningInstance.id)}>
+            <Button icon={<Square size={16} />} variant="danger" onClick={() => onStop?.(runningInstance.id)}>
               Stop
             </Button>
           ) : (
@@ -93,6 +116,9 @@ export default function InstanceCard({
           <Button icon={<Edit3 size={16} />} variant="secondary" onClick={() => onEdit?.(instance)}>
             Edit
           </Button>
+          <Button icon={<FileUp size={16} />} variant="secondary" onClick={() => onExport?.(instance)}>
+            Export
+          </Button>
           {instance.loaderType !== "vanilla" ? (
             <Button icon={<Package size={16} />} variant="secondary" onClick={() => onOpenMods?.(instance)}>
               Mods
@@ -100,26 +126,6 @@ export default function InstanceCard({
           ) : null}
         </div>
         <div className="card-action-right">
-          <div className="order-tools">
-            <button
-              className="icon-button"
-              disabled={!canMoveUp}
-              onClick={() => onMove?.(instance.id, -1)}
-              type="button"
-              aria-label="Move instance up"
-            >
-              <ArrowUp size={16} />
-            </button>
-            <button
-              className="icon-button"
-              disabled={!canMoveDown}
-              onClick={() => onMove?.(instance.id, 1)}
-              type="button"
-              aria-label="Move instance down"
-            >
-              <ArrowDown size={16} />
-            </button>
-          </div>
           <Button icon={<Trash2 size={16} />} variant="danger" onClick={() => onDelete?.(instance.id)}>
             Delete
           </Button>

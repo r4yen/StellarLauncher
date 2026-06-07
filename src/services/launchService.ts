@@ -16,9 +16,39 @@ export interface ProcessLaunchResult extends LaunchStatus {
   logPath?: string;
 }
 
+function parseMinecraftVersion(version: string): number[] {
+  const match = version.match(/\d+(?:\.\d+)*/);
+  return match ? match[0].split(".").map((part) => Number(part)) : [];
+}
+
+function isMinecraftVersionAtLeast(version: string, minimum: string): boolean {
+  const currentParts = parseMinecraftVersion(version);
+  const minimumParts = parseMinecraftVersion(minimum);
+  const length = Math.max(currentParts.length, minimumParts.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const current = currentParts[index] ?? 0;
+    const required = minimumParts[index] ?? 0;
+    if (current > required) return true;
+    if (current < required) return false;
+  }
+
+  return true;
+}
+
+function selectJavaPath(instance: Instance, settings: LauncherSettings): string {
+  const override = instance.javaPath.trim();
+  if (override) return override;
+
+  if (isMinecraftVersionAtLeast(instance.minecraftVersion, "26")) return settings.java25Path.trim();
+  if (isMinecraftVersionAtLeast(instance.minecraftVersion, "1.20.5")) return settings.java21Path.trim();
+  if (isMinecraftVersionAtLeast(instance.minecraftVersion, "1.17")) return settings.java17Path.trim();
+  return settings.java8Path.trim();
+}
+
 export async function validateLaunch(instance: Instance, account: Account | undefined, settings: LauncherSettings): Promise<LaunchStatus> {
   const canLaunchWithAccount = account?.type === "offline" || account?.loginStatus === "active";
-  const effectiveJavaPath = instance.javaPath.trim() || settings.javaPath.trim();
+  const effectiveJavaPath = selectJavaPath(instance, settings);
 
   if (!account || !canLaunchWithAccount) {
     return {
@@ -32,7 +62,7 @@ export async function validateLaunch(instance: Instance, account: Account | unde
   if (!instance.minecraftVersion || !instance.gameDirectory || !effectiveJavaPath) {
     return {
       state: "error",
-      message: "Instance configuration is incomplete. Set a Java path in Settings or on the instance.",
+      message: "Instance configuration is incomplete. Set the matching Java 8, 17, 21, or 25 path in Settings, or set a Java override on the instance.",
       instanceId: instance.id,
       updatedAt: new Date().toISOString()
     };
@@ -50,7 +80,7 @@ export async function startMinecraftProcess(instance: Instance, account: Account
   try {
     const effectiveInstance = {
       ...instance,
-      javaPath: instance.javaPath.trim() || settings.javaPath.trim()
+      javaPath: selectJavaPath(instance, settings)
     };
     const response = await invoke<ProcessLaunchResponse>("start_minecraft_process", {
       request: {

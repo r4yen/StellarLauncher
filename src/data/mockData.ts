@@ -11,7 +11,6 @@ export const defaultThemeSettings: ThemeSettings = {
 };
 
 export const defaultLauncherSettings: LauncherSettings = {
-  javaPath: "C:\\Program Files\\Eclipse Adoptium\\jdk-21\\bin\\java.exe",
   java8Path: "C:\\Program Files\\Eclipse Adoptium\\jdk-8\\bin\\java.exe",
   java17Path: "C:\\Program Files\\Eclipse Adoptium\\jdk-17\\bin\\java.exe",
   java21Path: "C:\\Program Files\\Eclipse Adoptium\\jdk-21\\bin\\java.exe",
@@ -21,7 +20,8 @@ export const defaultLauncherSettings: LauncherSettings = {
   jvmArgs: "-XX:+UseG1GC -XX:+UnlockExperimentalVMOptions",
   launcherFolder: "%APPDATA%\\StellarLauncher",
   minecraftStorageDirectory: "%APPDATA%\\StellarLauncher\\minecraft",
-  language: "en"
+  language: "en",
+  discordRichPresenceEnabled: true
 };
 
 export const defaultLauncherStatus: LauncherStatusSummary = {

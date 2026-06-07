@@ -8,6 +8,7 @@ export interface Account {
   type: AccountType;
   avatarColor: string;
   skinHeadUrl?: string;
+  selectedSkinId?: string;
   loginStatus: AccountLoginStatus;
   tokenExpiresAt?: string;
   lastUsedAt?: string;

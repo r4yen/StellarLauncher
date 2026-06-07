@@ -1,11 +1,13 @@
 import { ChevronDown } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 export interface SelectOption {
   value: string;
   label: string;
   description?: string;
+  color?: string;
   imageUrl?: string;
   imageAlt?: string;
 }
@@ -13,19 +15,42 @@ export interface SelectOption {
 interface CustomSelectProps {
   compact?: boolean;
   disabled?: boolean;
+  hideTriggerText?: boolean;
+  open?: boolean;
   menuWidth?: number;
   options: SelectOption[];
   placeholder: string;
+  triggerClassName?: string;
+  triggerIcon?: ReactNode;
   value: string;
   onChange: (value: string) => void;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export default function CustomSelect({ compact = false, disabled = false, menuWidth, options, placeholder, value, onChange }: CustomSelectProps) {
-  const [open, setOpen] = useState(false);
+export default function CustomSelect({
+  compact = false,
+  disabled = false,
+  hideTriggerText = false,
+  open: controlledOpen,
+  menuWidth,
+  options,
+  placeholder,
+  triggerClassName,
+  triggerIcon,
+  value,
+  onChange,
+  onOpenChange
+}: CustomSelectProps) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
   const [menuRect, setMenuRect] = useState({ left: 0, top: 0, width: 0 });
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const selected = options.find((option) => option.value === value);
+  const setOpen = (nextOpen: boolean) => {
+    if (controlledOpen === undefined) setUncontrolledOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  };
 
   useEffect(() => {
     const close = (event: MouseEvent) => {
@@ -83,6 +108,7 @@ export default function CustomSelect({ compact = false, disabled = false, menuWi
                 type="button"
               >
                 {option.imageUrl ? <img className="custom-select-image" src={option.imageUrl} alt={option.imageAlt ?? ""} /> : null}
+                {!option.imageUrl && option.color ? <span className="custom-select-color" style={{ background: option.color }} /> : null}
                 <span>
                   <strong>{option.label}</strong>
                   {option.description ? <small>{option.description}</small> : null}
@@ -104,13 +130,22 @@ export default function CustomSelect({ compact = false, disabled = false, menuWi
 
   return (
     <div className={className} ref={rootRef}>
-      <button className="custom-select-trigger" disabled={disabled} onClick={() => setOpen((current) => !current)} type="button">
+      <button
+        className={["custom-select-trigger", triggerClassName ?? ""].filter(Boolean).join(" ")}
+        disabled={disabled}
+        onClick={() => setOpen(!open)}
+        type="button"
+      >
+        {triggerIcon}
         {selected?.imageUrl ? <img className="custom-select-image" src={selected.imageUrl} alt={selected.imageAlt ?? ""} /> : null}
-        <span>
-          <strong>{selected?.label ?? placeholder}</strong>
-          {selected?.description ? <small>{selected.description}</small> : null}
-        </span>
-        <ChevronDown size={16} />
+        {!selected?.imageUrl && selected?.color ? <span className="custom-select-color" style={{ background: selected.color }} /> : null}
+        {!hideTriggerText ? (
+          <span>
+            <strong>{selected?.label ?? placeholder}</strong>
+            {selected?.description ? <small>{selected.description}</small> : null}
+          </span>
+        ) : null}
+        {!hideTriggerText ? <ChevronDown size={16} /> : null}
       </button>
       {menu}
     </div>

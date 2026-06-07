@@ -2,11 +2,14 @@ import SettingsForm from "../components/SettingsForm";
 import { LauncherSettings } from "../models/settings";
 
 interface SettingsPageProps {
+  javaSetupBusy?: boolean;
+  javaSetupStatus?: string;
   settings: LauncherSettings;
   onSave: (settings: LauncherSettings) => void;
+  onSetupJava?: () => void;
 }
 
-export default function SettingsPage({ settings, onSave }: SettingsPageProps) {
+export default function SettingsPage({ javaSetupBusy = false, javaSetupStatus, settings, onSave, onSetupJava }: SettingsPageProps) {
   return (
     <div className="page-stack">
       <div className="page-header">
@@ -17,7 +20,7 @@ export default function SettingsPage({ settings, onSave }: SettingsPageProps) {
         </div>
       </div>
       <section className="settings-grid">
-        <SettingsForm settings={settings} onSave={onSave} />
+        <SettingsForm javaSetupBusy={javaSetupBusy} javaSetupStatus={javaSetupStatus} settings={settings} onSave={onSave} onSetupJava={onSetupJava} />
       </section>
     </div>
   );

@@ -2,8 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { Account } from "../models/account";
 import { Instance, RunningInstance } from "../models/instance";
 import { LauncherSettings, ThemeSettings } from "../models/settings";
+import { SkinLibraryItem } from "../models/skin";
 
-type StorageKey = "accounts" | "instances" | "settings" | "theme" | "minecraftCache" | "runningInstances";
+type StorageKey = "accounts" | "instances" | "settings" | "theme" | "minecraftCache" | "runningInstances" | "skinLibrary";
 
 const fallbackPrefix = "stellarlauncher.";
 
@@ -44,6 +45,14 @@ export async function loadAccounts(fallback: Account[]): Promise<Account[]> {
 
 export async function saveAccounts(accounts: Account[]): Promise<Account[]> {
   return invokeOrFallback<Account[]>("save_accounts", { accounts }, () => writeLocal("accounts", accounts));
+}
+
+export async function loadSkinLibrary(fallback: SkinLibraryItem[]): Promise<SkinLibraryItem[]> {
+  return invokeOrFallback<SkinLibraryItem[]>("load_skin_library", {}, () => readLocalArray("skinLibrary", fallback));
+}
+
+export async function saveSkinLibrary(skins: SkinLibraryItem[]): Promise<SkinLibraryItem[]> {
+  return invokeOrFallback<SkinLibraryItem[]>("save_skin_library", { skins }, () => writeLocal("skinLibrary", skins));
 }
 
 export async function loadInstances(fallback: Instance[]): Promise<Instance[]> {

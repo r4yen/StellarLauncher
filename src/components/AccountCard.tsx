@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Star, Trash2, UserCheck } from "lucide-react";
+import { ArrowDown, ArrowUp, Image, Star, Trash2, UserCheck } from "lucide-react";
 import { Account } from "../models/account";
 import { minecraftHeadUrl } from "../services/avatarService";
 import Button from "./ui/Button";
@@ -7,17 +7,58 @@ import StatusBadge from "./StatusBadge";
 
 interface AccountCardProps {
   account: Account;
+  onOpenSkinLibrary?: (accountId: string) => void;
   onRemoveAccount?: (accountId: string) => void;
   onToggleFavorite?: (accountId: string) => void;
   onMove?: (accountId: string, direction: -1 | 1) => void;
   onSelectAccount: (accountId: string) => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }
 
-export default function AccountCard({ account, onRemoveAccount, onToggleFavorite, onMove, onSelectAccount }: AccountCardProps) {
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).format(new Date(value));
+}
+
+function formatUuid(value: string): string {
+  const compact = value.replace(/-/g, "");
+  if (compact.length !== 32) return value;
+  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+}
+
+export default function AccountCard({
+  account,
+  onOpenSkinLibrary,
+  onRemoveAccount,
+  onToggleFavorite,
+  onMove,
+  onSelectAccount,
+  canMoveUp = false,
+  canMoveDown = false
+}: AccountCardProps) {
   const avatarUrl = minecraftHeadUrl(account);
+  const className = [
+    "account-card",
+    account.isActive ? "account-card-active" : "",
+    account.isFavorite ? "account-card-favorite" : ""
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <Card className={account.isActive ? "account-card account-card-active" : "account-card"}>
+    <Card className={className}>
+      <div className="order-tools card-side-order-tools">
+        <button className="icon-button" disabled={!canMoveUp} onClick={() => onMove?.(account.id, -1)} type="button" aria-label="Move account up">
+          <ArrowUp size={16} />
+        </button>
+        <button className="icon-button" disabled={!canMoveDown} onClick={() => onMove?.(account.id, 1)} type="button" aria-label="Move account down">
+          <ArrowDown size={16} />
+        </button>
+      </div>
       {avatarUrl ? (
         <img className="account-avatar account-avatar-image" src={avatarUrl} alt={`${account.username} skin head`} />
       ) : (
@@ -29,7 +70,7 @@ export default function AccountCard({ account, onRemoveAccount, onToggleFavorite
         <div className="entity-title-row">
           <div>
             <h3>{account.username}</h3>
-            {account.type === "microsoft" ? <p>UUID {account.uuid}</p> : null}
+            {account.type === "microsoft" ? <p>{formatUuid(account.uuid)}</p> : null}
           </div>
           <div className="entity-title-actions">
             {account.isActive ? <StatusBadge state={account.loginStatus} label="active" /> : null}
@@ -44,7 +85,7 @@ export default function AccountCard({ account, onRemoveAccount, onToggleFavorite
           </div>
         </div>
         <div className="account-meta">
-          <span>{account.tokenExpiresAt ? `Token expires ${new Date(account.tokenExpiresAt).toLocaleString()}` : "No token expiry"}</span>
+          <span>{account.tokenExpiresAt ? `Token expires ${formatDate(account.tokenExpiresAt)}` : "No token expiry"}</span>
         </div>
         {account.errorMessage ? <p className="error-text">{account.errorMessage}</p> : null}
         <div className="card-bottom-actions">
@@ -52,18 +93,11 @@ export default function AccountCard({ account, onRemoveAccount, onToggleFavorite
             <Button icon={<UserCheck size={16} />} variant={account.isActive ? "secondary" : "primary"} onClick={() => onSelectAccount(account.id)}>
               {account.isActive ? "Selected" : "Select"}
             </Button>
+            <Button icon={<Image size={16} />} variant="secondary" onClick={() => onOpenSkinLibrary?.(account.id)}>
+              Skin
+            </Button>
           </div>
           <div className="card-action-right">
-            {!account.isFavorite ? (
-              <div className="order-tools">
-                <button className="icon-button" onClick={() => onMove?.(account.id, -1)} type="button" aria-label="Move account up">
-                  <ArrowUp size={16} />
-                </button>
-                <button className="icon-button" onClick={() => onMove?.(account.id, 1)} type="button" aria-label="Move account down">
-                  <ArrowDown size={16} />
-                </button>
-              </div>
-            ) : null}
             <Button icon={<Trash2 size={16} />} variant="danger" onClick={() => onRemoveAccount?.(account.id)}>
               Remove
             </Button>

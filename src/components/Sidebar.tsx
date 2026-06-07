@@ -1,11 +1,14 @@
-import { Home, MonitorCog, Palette, Server, Users } from "lucide-react";
+import { ExternalLink, Github, Home, MessageCircle, MonitorCog, Palette, Server, Users } from "lucide-react";
 import { t, Language } from "../i18n";
 import { PageKey } from "../models/launcher";
+import { openExternalUrl } from "../services/authService";
+import { formatCompactPlaytime } from "../services/instanceService";
 import Logo from "./Logo";
 
 interface SidebarProps {
   activePage: PageKey;
   language: Language;
+  totalPlaytimeSeconds: number;
   onNavigate: (page: PageKey) => void;
 }
 
@@ -17,7 +20,7 @@ const navItems: Array<{ key: PageKey; labelKey: "home" | "instances" | "accounts
   { key: "settings", labelKey: "settings", icon: MonitorCog }
 ];
 
-export default function Sidebar({ activePage, language, onNavigate }: SidebarProps) {
+export default function Sidebar({ activePage, language, totalPlaytimeSeconds, onNavigate }: SidebarProps) {
   return (
     <aside className="sidebar">
       <Logo size="sm" />
@@ -38,8 +41,24 @@ export default function Sidebar({ activePage, language, onNavigate }: SidebarPro
         })}
       </nav>
       <div className="sidebar-footer">
-        <span>{t(language, "localMode")}</span>
-        <strong>v1.0.1</strong>
+        <div className="sidebar-links">
+          <button type="button" onClick={() => openExternalUrl("https://github.com/r4yen/StellarLauncher/")}>
+            <Github size={15} />
+            GitHub
+            <ExternalLink className="sidebar-link-indicator" size={12} />
+          </button>
+          <button type="button" onClick={() => openExternalUrl("https://discord.gg/8kMmj8Vb9Q")}>
+            <MessageCircle size={15} />
+            Discord
+            <ExternalLink className="sidebar-link-indicator" size={12} />
+          </button>
+        </div>
+        <div className="sidebar-version">
+          <span>{t(language, "localMode")}</span>
+          <strong>v1.0.1</strong>
+          <span>Total Playtime</span>
+          <strong>{formatCompactPlaytime(totalPlaytimeSeconds)}</strong>
+        </div>
       </div>
     </aside>
   );

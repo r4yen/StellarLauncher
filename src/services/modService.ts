@@ -17,3 +17,16 @@ export async function deleteMod(path: string): Promise<void> {
 export async function addModFile(gameDirectory: string, sourcePath: string): Promise<ModFile> {
   return invoke<ModFile>("add_mod_file", { gameDirectory, sourcePath });
 }
+
+export interface ModDownloadProgress {
+  operationId: string;
+  status: "pending" | "downloading" | "completed" | "error";
+  downloadedBytes: number;
+  totalBytes?: number;
+  fileName: string;
+  targetPath: string;
+}
+
+export async function installModrinthMod(gameDirectory: string, downloadUrl: string, fileName: string, replacePath?: string, operationId?: string): Promise<ModFile> {
+  return invoke<ModFile>("install_modrinth_mod", { gameDirectory, downloadUrl, fileName, replacePath, operationId });
+}

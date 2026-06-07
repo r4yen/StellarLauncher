@@ -1,4 +1,5 @@
 import { Account } from "../models/account";
+import { SkinLibraryItem } from "../models/skin";
 import { loadAccounts, saveAccounts } from "./storageService";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -110,10 +111,20 @@ export async function addOfflinePlayerAccount(accounts: Account[], name: string)
 }
 
 export async function toggleAccountFavorite(accounts: Account[], accountId: string): Promise<Account[]> {
+  const nextFavorite = !accounts.find((account) => account.id === accountId)?.isFavorite;
+  const groupMaxOrder = Math.max(
+    -1,
+    ...accounts
+      .filter((account) => Boolean(account.isFavorite) === nextFavorite && account.id !== accountId)
+      .map((account) => account.order ?? 0)
+  );
+
   return persistAccounts(
-    sortAccounts(
-      accounts.map((account) =>
-        account.id === accountId ? { ...account, isFavorite: !account.isFavorite } : account
+    normalizeAccountOrder(
+      sortAccounts(
+        accounts.map((account) =>
+          account.id === accountId ? { ...account, isFavorite: nextFavorite, order: groupMaxOrder + 1 } : account
+        )
       )
     )
   );
@@ -124,10 +135,27 @@ export async function moveAccount(accounts: Account[], accountId: string, direct
   const index = sorted.findIndex((account) => account.id === accountId);
   const target = index + direction;
   if (index < 0 || target < 0 || target >= sorted.length) return accounts;
+  if (Boolean(sorted[index].isFavorite) !== Boolean(sorted[target].isFavorite)) return accounts;
 
   const next = [...sorted];
   [next[index], next[target]] = [next[target], next[index]];
   return persistAccounts(normalizeAccountOrder(next));
+}
+
+export async function setAccountSkin(accounts: Account[], accountId: string, skin: SkinLibraryItem): Promise<Account[]> {
+  return persistAccounts(
+    sortAccounts(
+      accounts.map((account) =>
+        account.id === accountId
+          ? {
+              ...account,
+              selectedSkinId: skin.id,
+              skinHeadUrl: skin.imageUrl
+            }
+          : account
+      )
+    )
+  );
 }
 
 export function sortAccounts(accounts: Account[]): Account[] {
@@ -138,5 +166,18 @@ export function sortAccounts(accounts: Account[]): Account[] {
 }
 
 function normalizeAccountOrder(accounts: Account[]): Account[] {
-  return accounts.map((account, index) => ({ ...account, order: index }));
+  let favoriteOrder = 0;
+  let regularOrder = 0;
+  return sortAccounts(accounts).map((account) => {
+    if (account.isFavorite) return { ...account, order: favoriteOrder++ };
+    return { ...account, order: regularOrder++ };
+  });
+}
+
+export function canMoveAccount(accounts: Account[], accountId: string, direction: -1 | 1): boolean {
+  const sorted = sortAccounts(accounts);
+  const index = sorted.findIndex((account) => account.id === accountId);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= sorted.length) return false;
+  return Boolean(sorted[index].isFavorite) === Boolean(sorted[target].isFavorite);
 }
