@@ -23,15 +23,23 @@ pub struct DiscordRpcActivity {
 }
 
 #[tauri::command]
-pub fn update_discord_rpc(state: tauri::State<DiscordRpcState>, activity: DiscordRpcActivity) -> Result<(), String> {
+pub fn update_discord_rpc(
+    state: tauri::State<DiscordRpcState>,
+    activity: DiscordRpcActivity,
+) -> Result<(), String> {
     if !activity.enabled {
         return clear_discord_rpc(state);
     }
 
-    let mut guard = state.client.lock().map_err(|_| "Cannot lock Discord RPC state.".to_string())?;
+    let mut guard = state
+        .client
+        .lock()
+        .map_err(|_| "Cannot lock Discord RPC state.".to_string())?;
     if guard.is_none() {
         let mut client = DiscordIpcClient::new(DISCORD_APPLICATION_ID);
-        client.connect().map_err(|error| format!("Cannot connect to Discord RPC: {error}"))?;
+        client
+            .connect()
+            .map_err(|error| format!("Cannot connect to Discord RPC: {error}"))?;
         *guard = Some(client);
     }
 
@@ -49,11 +57,17 @@ pub fn update_discord_rpc(state: tauri::State<DiscordRpcState>, activity: Discor
         }
     }
 
-    let client = guard.as_mut().ok_or_else(|| "Discord RPC client is not available.".to_string())?;
+    let client = guard
+        .as_mut()
+        .ok_or_else(|| "Discord RPC client is not available.".to_string())?;
     if client.set_activity(payload.clone()).is_err() {
         let mut client = DiscordIpcClient::new(DISCORD_APPLICATION_ID);
-        client.connect().map_err(|error| format!("Cannot reconnect to Discord RPC: {error}"))?;
-        client.set_activity(payload).map_err(|error| format!("Cannot update Discord RPC: {error}"))?;
+        client
+            .connect()
+            .map_err(|error| format!("Cannot reconnect to Discord RPC: {error}"))?;
+        client
+            .set_activity(payload)
+            .map_err(|error| format!("Cannot update Discord RPC: {error}"))?;
         *guard = Some(client);
     }
 
@@ -62,7 +76,10 @@ pub fn update_discord_rpc(state: tauri::State<DiscordRpcState>, activity: Discor
 
 #[tauri::command]
 pub fn clear_discord_rpc(state: tauri::State<DiscordRpcState>) -> Result<(), String> {
-    let mut guard = state.client.lock().map_err(|_| "Cannot lock Discord RPC state.".to_string())?;
+    let mut guard = state
+        .client
+        .lock()
+        .map_err(|_| "Cannot lock Discord RPC state.".to_string())?;
     if let Some(client) = guard.as_mut() {
         let _ = client.clear_activity();
         let _ = client.close();

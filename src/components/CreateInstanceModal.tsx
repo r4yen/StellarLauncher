@@ -25,7 +25,8 @@ const defaultInstanceIcon = "#64748b";
 
 function defaultProfileDirectory(instanceName: string): string {
   const profileName = instanceName.trim().replace(/[<>:"/\\|?*]/g, "-") || "<Instance Name>";
-  return `%APPDATA%\\StellarLauncher\\profiles\\${profileName}`;
+  const isLinux = typeof navigator !== "undefined" && /linux/i.test(navigator.userAgent);
+  return isLinux ? `$HOME/.local/share/StellarLauncher/profiles/${profileName}` : `%APPDATA%\\StellarLauncher\\profiles\\${profileName}`;
 }
 
 export default function CreateInstanceModal({ editingInstance, open, settings, onClose, onCreate, onUpdate }: CreateInstanceModalProps) {

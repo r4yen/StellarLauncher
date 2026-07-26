@@ -55,6 +55,7 @@ import {
   saveSettings,
   saveTheme
 } from "./services/storageService";
+import { joinDisplayPath } from "./utils/path";
 
 const idleStatus: LaunchStatus = {
   state: "idle",
@@ -601,7 +602,7 @@ export default function App() {
       instanceId: `java-${version}`,
       instanceName: `Adoptium Java ${version}`,
       label: `Eclipse Temurin JDK ${version}`,
-      targetPath: `${settings.launcherFolder}\\java\\jdk-${version}`,
+      targetPath: joinDisplayPath(settings.launcherFolder, "java", `jdk-${version}`),
       status: "pending",
       downloadedMb: 0,
       totalMb: estimates[version],
@@ -896,7 +897,11 @@ export default function App() {
               message: processStatus.message,
               processId: processStatus.processId,
               logPath: processStatus.logPath,
-              logs: [...running.logs, `[${new Date().toLocaleTimeString()}] Minecraft process started with pid ${processStatus.processId}`],
+              logs: [
+                ...running.logs,
+                ...(processStatus.debugLines ?? []).map((line) => `[${new Date().toLocaleTimeString()}] ${line}`),
+                `[${new Date().toLocaleTimeString()}] Minecraft process started with pid ${processStatus.processId}`
+              ],
               updatedAt: new Date().toISOString()
             }
           : running

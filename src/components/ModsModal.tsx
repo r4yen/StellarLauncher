@@ -8,6 +8,7 @@ import modrinthLogo from "../assets/modrinth.png";
 import { addModFile, deleteMod, installModrinthMod, listMods, ModDownloadProgress, setModEnabled } from "../services/modService";
 import { listen } from "@tauri-apps/api/event";
 import { enrichModsWithModrinth, getProjectVersions, primaryJarFile, searchModrinthMods } from "../services/modrinthService";
+import { joinDisplayPath } from "../utils/path";
 import Button from "./ui/Button";
 import Card from "./ui/Card";
 
@@ -233,7 +234,7 @@ export default function ModsModal({
       const versions = await getProjectVersions(result.projectId, instance);
       const file = versions[0] ? primaryJarFile(versions[0]) : undefined;
       if (!file) throw new Error("No compatible Modrinth file found for this instance.");
-      operationId = onCreateDownloadTask(instance.name, file.filename, `${instance.gameDirectory}\\mods\\${file.filename}`);
+      operationId = onCreateDownloadTask(instance.name, file.filename, joinDisplayPath(instance.gameDirectory, "mods", file.filename));
       setModProgress((current) => ({ ...current, [`project:${result.projectId}`]: { operationId, percent: 0, status: "pending" } }));
       const installed = await installModrinthMod(instance.gameDirectory, file.url, file.filename, undefined, operationId);
       const nextMods = [installed, ...mods];
@@ -258,7 +259,7 @@ export default function ModsModal({
 
     setBusyModPath(mod.path);
     setError(undefined);
-    const operationId = onCreateDownloadTask(instance.name, mod.modrinth.latestFileName, `${instance.gameDirectory}\\mods\\${mod.modrinth.latestFileName}`);
+    const operationId = onCreateDownloadTask(instance.name, mod.modrinth.latestFileName, joinDisplayPath(instance.gameDirectory, "mods", mod.modrinth.latestFileName));
     setModProgress((current) => ({ ...current, [mod.path]: { operationId, percent: 0, status: "pending" } }));
     try {
       const updated = await installModrinthMod(instance.gameDirectory, mod.modrinth.latestDownloadUrl, mod.modrinth.latestFileName, mod.path, operationId);

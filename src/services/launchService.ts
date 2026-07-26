@@ -9,11 +9,13 @@ interface ProcessLaunchResponse {
   instanceId: string;
   processId: number;
   logPath: string;
+  debugLines: string[];
 }
 
 export interface ProcessLaunchResult extends LaunchStatus {
   processId?: number;
   logPath?: string;
+  debugLines?: string[];
 }
 
 function parseMinecraftVersion(version: string): number[] {
@@ -96,6 +98,7 @@ export async function startMinecraftProcess(instance: Instance, account: Account
       instanceId: response.instanceId,
       processId: response.processId,
       logPath: response.logPath,
+      debugLines: response.debugLines,
       updatedAt: new Date().toISOString()
     };
   } catch (error) {

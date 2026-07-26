@@ -55,7 +55,7 @@ export default function Sidebar({ activePage, language, totalPlaytimeSeconds, on
         </div>
         <div className="sidebar-version">
           <span>{t(language, "localMode")}</span>
-          <strong>v1.0.1</strong>
+          <strong>v1.0.2</strong>
           <span>Total Playtime</span>
           <strong>{formatCompactPlaytime(totalPlaytimeSeconds)}</strong>
         </div>

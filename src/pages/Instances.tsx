@@ -1,6 +1,7 @@
 import { FileDown, Plus } from "lucide-react";
 import { useState } from "react";
 import CreateInstanceModal from "../components/CreateInstanceModal";
+import ExportInstanceModal from "../components/ExportInstanceModal";
 import InstanceCard from "../components/InstanceCard";
 import ModsModal from "../components/ModsModal";
 import Button from "../components/ui/Button";
@@ -10,7 +11,9 @@ import { CreateInstanceInput, Instance, LaunchStatus, RunningInstance } from "..
 import { ModFile } from "../models/mod";
 import { LauncherSettings } from "../models/settings";
 import { canMoveInstance } from "../services/instanceService";
+import { installModrinthMod, setModEnabled } from "../services/modService";
 import { exportStellarInstanceToFile, importStellarInstanceFromFile } from "../services/stellarInstanceFileService";
+import { joinDisplayPath } from "../utils/path";
 
 interface InstancesProps {
   instances: Instance[];
@@ -53,6 +56,7 @@ export default function Instances({
 }: InstancesProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editingInstance, setEditingInstance] = useState<Instance | undefined>();
+  const [exportInstance, setExportInstance] = useState<Instance | undefined>();
   const [modsInstance, setModsInstance] = useState<Instance | undefined>();
   const [fileError, setFileError] = useState<string | undefined>();
   const openCreate = () => {
@@ -70,16 +74,32 @@ export default function Instances({
   const importFromFile = async () => {
     setFileError(undefined);
     try {
-      const input = await importStellarInstanceFromFile();
-      if (input) onCreateInstance(input);
+      const result = await importStellarInstanceFromFile();
+      if (!result) return;
+
+      onCreateInstance(result.input);
+
+      for (const modDownload of result.modDownloads) {
+        const operationId = onCreateDownloadTask(result.input.name, modDownload.fileName, joinDisplayPath(result.input.gameDirectory, "mods", modDownload.fileName));
+        try {
+          const installed = await installModrinthMod(result.input.gameDirectory, modDownload.downloadUrl, modDownload.fileName, undefined, operationId);
+          if (!modDownload.enabled) {
+            await setModEnabled(installed.path, false);
+          }
+        } catch (downloadError) {
+          onFailDownloadTask(operationId);
+          throw downloadError;
+        }
+      }
     } catch (error) {
       setFileError(error instanceof Error ? error.message : String(error));
     }
   };
-  const exportToFile = async (instance: Instance) => {
+  const exportToFile = async (instance: Instance, includedFolders: string[]) => {
     setFileError(undefined);
     try {
-      await exportStellarInstanceToFile(instance);
+      await exportStellarInstanceToFile(instance, includedFolders, modrinthModsByInstance[instance.id]);
+      setExportInstance(undefined);
     } catch (error) {
       setFileError(error instanceof Error ? error.message : String(error));
     }
@@ -113,7 +133,7 @@ export default function Instances({
               runningInstance={runningInstances.find((running) => running.instance.id === instance.id)}
               onEdit={openEdit}
               onDelete={onDeleteInstance}
-              onExport={exportToFile}
+              onExport={setExportInstance}
               onToggleFavorite={onToggleFavorite}
               onMove={onMoveInstance}
               canMoveUp={canMoveInstance(instances, instance.id, -1)}
@@ -137,6 +157,12 @@ export default function Instances({
         onClose={closeModal}
         onCreate={onCreateInstance}
         onUpdate={onUpdateInstance}
+      />
+      <ExportInstanceModal
+        instance={exportInstance}
+        open={Boolean(exportInstance)}
+        onClose={() => setExportInstance(undefined)}
+        onExport={exportToFile}
       />
       <ModsModal
         instance={modsInstance}

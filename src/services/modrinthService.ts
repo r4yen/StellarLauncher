@@ -49,7 +49,7 @@ function loaderFacet(loaderType: LoaderType): string {
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "StellarLauncher/1.0.1"
+      "User-Agent": "StellarLauncher/1.0.2"
     }
   });
 
@@ -86,6 +86,7 @@ export async function findModrinthMatch(mod: ModFile, instance: Instance): Promi
     fetchJson<ModrinthProject>(`${MODRINTH_API}/project/${encodeURIComponent(currentVersion.project_id)}`),
     getProjectVersions(currentVersion.project_id, instance)
   ]);
+  const currentFile = primaryJarFile(currentVersion);
   const latestVersion = versions[0];
   const latestFile = latestVersion ? primaryJarFile(latestVersion) : undefined;
 
@@ -94,6 +95,8 @@ export async function findModrinthMatch(mod: ModFile, instance: Instance): Promi
     versionId: currentVersion.id,
     title: project.title,
     iconUrl: project.icon_url,
+    currentFileName: currentFile?.filename,
+    currentDownloadUrl: currentFile?.url,
     latestVersionId: latestVersion?.id,
     latestVersionName: latestVersion?.version_number ?? latestVersion?.name,
     latestFileName: latestFile?.filename,

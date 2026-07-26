@@ -18,11 +18,17 @@ struct LauncherStatus {
 
 #[tauri::command]
 fn get_launcher_status() -> LauncherStatus {
+    #[cfg(target_os = "linux")]
+    let config_path = "$HOME/.local/share/StellarLauncher/config.json";
+
+    #[cfg(not(target_os = "linux"))]
+    let config_path = "%APPDATA%\\StellarLauncher\\config.json";
+
     LauncherStatus {
         version: env!("CARGO_PKG_VERSION").to_string(),
         java_detected: true,
         storage_ready: true,
-        config_path: "%APPDATA%\\StellarLauncher\\config.json".to_string(),
+        config_path: config_path.to_string(),
     }
 }
 

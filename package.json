@@ -1,13 +1,16 @@
 {
   "name": "stellarlauncher",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build:frontend": "tsc && vite build",
+    "build": "node scripts/build-desktop.mjs",
+    "build:windows": "node scripts/build-desktop.mjs windows",
+    "build:linux": "node scripts/build-desktop.mjs linux",
     "preview": "vite preview",
-    "tauri": "set PATH=%PATH%;%USERPROFILE%\\.cargo\\bin&& tauri"
+    "tauri": "node scripts/run-tauri.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",

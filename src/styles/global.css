@@ -2376,6 +2376,61 @@ textarea:focus {
   transform-origin: center;
 }
 
+.export-instance-modal {
+  width: min(720px, calc(100vw - 96px));
+  max-height: calc(100vh - 112px);
+  overflow: auto;
+  animation: modal-in var(--motion-med) both;
+  transform-origin: center;
+}
+
+.export-instance-content {
+  display: grid;
+  gap: 16px;
+}
+
+.export-instance-content p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.export-folder-list {
+  display: grid;
+  gap: 10px;
+}
+
+.export-folder-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.export-folder-row input {
+  width: 18px;
+  height: 18px;
+}
+
+.export-folder-row div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.export-folder-row strong {
+  color: var(--text);
+}
+
+.export-folder-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .image-picker-preview {
   display: flex;
   align-items: center;
@@ -2445,6 +2500,8 @@ textarea:focus {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 16px;
+  width: min(1080px, calc(100vw - 56px));
+  height: min(84vh, 800px);
   overflow: hidden;
 }
 
@@ -2513,7 +2570,7 @@ textarea:focus {
 }
 
 .mods-content:not(.mods-content-split) .mods-local-pane {
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .mods-list {

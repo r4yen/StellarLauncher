@@ -15,6 +15,8 @@ export interface ModrinthMatch {
   versionId: string;
   title: string;
   iconUrl?: string;
+  currentFileName?: string;
+  currentDownloadUrl?: string;
   latestVersionId?: string;
   latestVersionName?: string;
   latestFileName?: string;

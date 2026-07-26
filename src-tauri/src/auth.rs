@@ -2,7 +2,10 @@ use chrono::{Duration, Utc};
 use keyring::Entry;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs, path::PathBuf, process::Command, sync::Mutex, time::Duration as StdDuration};
+use std::{
+    collections::HashMap, fs, path::PathBuf, process::Command, sync::Mutex,
+    time::Duration as StdDuration,
+};
 use tokio::time::sleep;
 use uuid::Uuid;
 
@@ -14,7 +17,7 @@ const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MINECRAFT_LOGIN_URL: &str = "https://api.minecraftservices.com/launcher/login";
 const MINECRAFT_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
 const KEYRING_SERVICE: &str = "app.stellarlauncher.desktop";
-const USER_AGENT: &str = "StellarLauncher/1.0.1";
+const USER_AGENT: &str = "StellarLauncher/1.0.2";
 
 #[derive(Default)]
 pub struct AuthState {
@@ -101,6 +104,8 @@ struct XboxDisplayClaims {
 #[derive(Debug, Deserialize)]
 struct XboxUserInfo {
     uhs: String,
+    #[serde(default)]
+    xid: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,7 +127,8 @@ struct MinecraftSkin {
 }
 
 fn client_id() -> Result<String, String> {
-    let value = std::env::var("STELLAR_MICROSOFT_CLIENT_ID").unwrap_or_else(|_| DEFAULT_MICROSOFT_CLIENT_ID.to_string());
+    let value = std::env::var("STELLAR_MICROSOFT_CLIENT_ID")
+        .unwrap_or_else(|_| DEFAULT_MICROSOFT_CLIENT_ID.to_string());
     if value.trim().is_empty() {
         return Err("Microsoft Client ID is not configured. Set STELLAR_MICROSOFT_CLIENT_ID to your public desktop app registration id.".to_string());
     }
@@ -130,7 +136,8 @@ fn client_id() -> Result<String, String> {
 }
 
 fn keyring_entry(account_id: &str) -> Result<Entry, String> {
-    Entry::new(KEYRING_SERVICE, account_id).map_err(|error| format!("Cannot access OS keyring: {error}"))
+    Entry::new(KEYRING_SERVICE, account_id)
+        .map_err(|error| format!("Cannot access OS keyring: {error}"))
 }
 
 fn store_token_bundle(account_id: &str, bundle: &serde_json::Value) -> Result<(), String> {
@@ -154,32 +161,48 @@ pub fn remove_account_tokens(account_id: String) -> Result<(), String> {
 
     let path = fallback_token_path(&account_id)?;
     if path.exists() {
-        fs::remove_file(&path).map_err(|error| format!("Cannot remove fallback token material: {error}"))?;
+        fs::remove_file(&path)
+            .map_err(|error| format!("Cannot remove fallback token material: {error}"))?;
     }
 
     Ok(())
 }
 
 fn fallback_token_dir() -> Result<PathBuf, String> {
+    #[cfg(target_os = "linux")]
+    let base = std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|_| {
+            std::env::var("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
+        })
+        .map_err(|_| {
+            "Cannot resolve Linux data directory for token fallback storage.".to_string()
+        })?;
+
+    #[cfg(not(target_os = "linux"))]
     let base = std::env::var("APPDATA")
         .map(PathBuf::from)
         .or_else(|_| std::env::var("LOCALAPPDATA").map(PathBuf::from))
         .map_err(|_| "Cannot resolve AppData directory for token fallback storage.".to_string())?;
     let dir = base.join("StellarLauncher").join("account-tokens");
-    fs::create_dir_all(&dir).map_err(|error| format!("Cannot create token fallback directory: {error}"))?;
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("Cannot create token fallback directory: {error}"))?;
     Ok(dir)
 }
 
 fn fallback_token_path(account_id: &str) -> Result<PathBuf, String> {
     let safe_id = account_id
         .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || *character == '-' || *character == '_')
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || *character == '-' || *character == '_'
+        })
         .collect::<String>();
     Ok(fallback_token_dir()?.join(format!("{safe_id}.json")))
 }
 
 fn write_fallback_token_bundle(account_id: &str, raw: &str) -> Result<(), String> {
-    fs::write(fallback_token_path(account_id)?, raw).map_err(|error| format!("Cannot write fallback token material: {error}"))
+    fs::write(fallback_token_path(account_id)?, raw)
+        .map_err(|error| format!("Cannot write fallback token material: {error}"))
 }
 
 fn read_token_bundle(account_id: &str) -> Result<String, String> {
@@ -192,7 +215,8 @@ fn read_token_bundle(account_id: &str) -> Result<String, String> {
     }
 
     fs::read_to_string(fallback_token_path(account_id)?).map_err(|_| {
-        "No token material is stored for this account. Remove the account and sign in again.".to_string()
+        "No token material is stored for this account. Remove the account and sign in again."
+            .to_string()
     })
 }
 
@@ -236,7 +260,9 @@ pub fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn begin_ms_device_login(state: tauri::State<'_, AuthState>) -> Result<DeviceLoginStart, String> {
+pub async fn begin_ms_device_login(
+    state: tauri::State<'_, AuthState>,
+) -> Result<DeviceLoginStart, String> {
     let client_id = client_id()?;
     let response = Client::new()
         .post(DEVICE_CODE_URL)
@@ -250,8 +276,13 @@ pub async fn begin_ms_device_login(state: tauri::State<'_, AuthState>) -> Result
 
     if !response.status().is_success() {
         let status = response.status();
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown Microsoft error".to_string());
-        return Err(format!("Microsoft device login failed with {status}: {error_text}"));
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown Microsoft error".to_string());
+        return Err(format!(
+            "Microsoft device login failed with {status}: {error_text}"
+        ));
     }
 
     let body = response
@@ -288,7 +319,10 @@ pub async fn begin_ms_device_login(state: tauri::State<'_, AuthState>) -> Result
 }
 
 #[tauri::command]
-pub async fn poll_ms_device_login(state: tauri::State<'_, AuthState>, session_id: String) -> Result<DeviceLoginPollResult, String> {
+pub async fn poll_ms_device_login(
+    state: tauri::State<'_, AuthState>,
+    session_id: String,
+) -> Result<DeviceLoginPollResult, String> {
     let client_id = client_id()?;
     let session = state
         .sessions
@@ -322,7 +356,10 @@ pub async fn poll_ms_device_login(state: tauri::State<'_, AuthState>, session_id
             return Ok(DeviceLoginPollResult {
                 status: "pending".to_string(),
                 account: None,
-                message: error.error_description.or(Some(format!("Waiting for Microsoft authorization. Poll every {} seconds.", session.interval_seconds))),
+                message: error.error_description.or(Some(format!(
+                    "Waiting for Microsoft authorization. Poll every {} seconds.",
+                    session.interval_seconds
+                ))),
             });
         }
 
@@ -353,9 +390,12 @@ pub async fn poll_ms_device_login(state: tauri::State<'_, AuthState>, session_id
 }
 
 #[tauri::command]
-pub async fn refresh_minecraft_account(account_id: String) -> Result<DeviceLoginPollResult, String> {
+pub async fn refresh_minecraft_account(
+    account_id: String,
+) -> Result<DeviceLoginPollResult, String> {
     let raw = read_token_bundle(&account_id)?;
-    let stored: serde_json::Value = serde_json::from_str(&raw).map_err(|error| format!("Cannot parse stored token metadata: {error}"))?;
+    let stored: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("Cannot parse stored token metadata: {error}"))?;
     let refresh_token = stored
         .get("refreshToken")
         .and_then(|value| value.as_str())
@@ -395,7 +435,9 @@ pub async fn refresh_minecraft_account(account_id: String) -> Result<DeviceLogin
     })
 }
 
-async fn complete_minecraft_login(microsoft_token: &MicrosoftTokenResponse) -> Result<Account, String> {
+async fn complete_minecraft_login(
+    microsoft_token: &MicrosoftTokenResponse,
+) -> Result<Account, String> {
     let client = Client::new();
     let xbox_response = client
         .post(XBOX_AUTH_URL)
@@ -439,7 +481,10 @@ async fn complete_minecraft_login(microsoft_token: &MicrosoftTokenResponse) -> R
         .map_err(|error| format!("XSTS authentication failed: {error}"))?;
 
     if !xsts_response.status().is_success() {
-        return Err("XSTS authentication was rejected. The Microsoft account may not have Xbox access.".to_string());
+        return Err(
+            "XSTS authentication was rejected. The Microsoft account may not have Xbox access."
+                .to_string(),
+        );
     }
 
     let xsts = xsts_response
@@ -452,6 +497,12 @@ async fn complete_minecraft_login(microsoft_token: &MicrosoftTokenResponse) -> R
         .first()
         .map(|info| info.uhs.clone())
         .ok_or_else(|| "XSTS response did not include a user hash.".to_string())?;
+    let xuid = xsts
+        .display_claims
+        .xui
+        .first()
+        .and_then(|info| info.xid.clone())
+        .unwrap_or_default();
     let identity_token = format!("XBL3.0 x={};{}", user_hash, xsts.token);
     let minecraft_token = request_minecraft_token(&client, &identity_token).await?;
     let profile_response = client
@@ -464,7 +515,9 @@ async fn complete_minecraft_login(microsoft_token: &MicrosoftTokenResponse) -> R
         .map_err(|error| format!("Cannot request Minecraft profile: {error}"))?;
 
     if !profile_response.status().is_success() {
-        return Err("No Minecraft Java profile was returned for this Microsoft account.".to_string());
+        return Err(
+            "No Minecraft Java profile was returned for this Microsoft account.".to_string(),
+        );
     }
 
     let profile = profile_response
@@ -480,7 +533,10 @@ async fn complete_minecraft_login(microsoft_token: &MicrosoftTokenResponse) -> R
         &serde_json::json!({
             "refreshToken": microsoft_token.refresh_token.clone(),
             "minecraftAccessToken": minecraft_token.access_token.clone(),
-            "minecraftTokenExpiresAt": expires_at.clone()
+            "minecraftTokenExpiresAt": expires_at.clone(),
+            "xboxUserHash": user_hash,
+            "xboxUserId": xuid,
+            "microsoftClientId": client_id().unwrap_or_else(|_| DEFAULT_MICROSOFT_CLIENT_ID.to_string())
         }),
     )?;
 
@@ -499,7 +555,10 @@ async fn complete_minecraft_login(microsoft_token: &MicrosoftTokenResponse) -> R
     })
 }
 
-async fn request_minecraft_token(client: &Client, identity_token: &str) -> Result<MinecraftTokenResponse, String> {
+async fn request_minecraft_token(
+    client: &Client,
+    identity_token: &str,
+) -> Result<MinecraftTokenResponse, String> {
     let mut last_service_error = None;
 
     for attempt in 0..3 {
@@ -519,12 +578,19 @@ async fn request_minecraft_token(client: &Client, identity_token: &str) -> Resul
             return minecraft_response
                 .json::<MinecraftTokenResponse>()
                 .await
-                .map_err(|error| format!("Cannot parse Minecraft Services token response: {error}"));
+                .map_err(|error| {
+                    format!("Cannot parse Minecraft Services token response: {error}")
+                });
         }
 
         let status = minecraft_response.status();
-        let error_text = minecraft_response.text().await.unwrap_or_else(|_| "No response body".to_string());
-        last_service_error = Some(format!("Minecraft Services launcher login rejected the XSTS token with {status}: {error_text}"));
+        let error_text = minecraft_response
+            .text()
+            .await
+            .unwrap_or_else(|_| "No response body".to_string());
+        last_service_error = Some(format!(
+            "Minecraft Services launcher login rejected the XSTS token with {status}: {error_text}"
+        ));
 
         if matches!(status.as_u16(), 502 | 503 | 504) && attempt < 2 {
             sleep(StdDuration::from_millis(750 * (attempt + 1) as u64)).await;
@@ -534,5 +600,6 @@ async fn request_minecraft_token(client: &Client, identity_token: &str) -> Resul
         break;
     }
 
-    Err(last_service_error.unwrap_or_else(|| "Minecraft Services authentication failed.".to_string()))
+    Err(last_service_error
+        .unwrap_or_else(|| "Minecraft Services authentication failed.".to_string()))
 }

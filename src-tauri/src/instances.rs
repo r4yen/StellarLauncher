@@ -2,19 +2,21 @@ use keyring::Entry;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::{
     collections::HashMap,
     env, fs,
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use zip::ZipArchive;
 
 const KEYRING_SERVICE: &str = "app.stellarlauncher.desktop";
-const VERSION_MANIFEST_URL: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+const DEFAULT_MICROSOFT_CLIENT_ID: &str = "499546d9-bbfe-4b9b-a086-eb3d75afb78f";
+const VERSION_MANIFEST_URL: &str =
+    "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
 const ASSET_OBJECT_BASE_URL: &str = "https://resources.download.minecraft.net";
 const FABRIC_PROFILE_URL: &str = "https://meta.fabricmc.net/v2/versions/loader";
 const QUILT_PROFILE_URL: &str = "https://meta.quiltmc.org/v3/versions/loader";
@@ -92,6 +94,14 @@ pub struct ProcessLaunchResponse {
     pub instance_id: String,
     pub process_id: u32,
     pub log_path: String,
+    pub debug_lines: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct MinecraftAccountSession {
+    access_token: String,
+    xuid: String,
+    client_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -210,11 +220,23 @@ pub fn build_launch_request(request: LaunchRequest) -> Result<LaunchRequest, Str
         return Err("Instance id is required.".to_string());
     }
 
-    if request.account_id.as_deref().unwrap_or("").trim().is_empty() {
+    if request
+        .account_id
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+    {
         return Err("A logged-in account is required before launch.".to_string());
     }
 
-    if request.game_directory.as_deref().unwrap_or("").trim().is_empty() {
+    if request
+        .game_directory
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+    {
         return Err("Game directory is required before launch.".to_string());
     }
 
@@ -222,10 +244,17 @@ pub fn build_launch_request(request: LaunchRequest) -> Result<LaunchRequest, Str
 }
 
 #[tauri::command]
-pub async fn ensure_minecraft_files(request: EnsureMinecraftFilesRequest) -> Result<EnsureMinecraftFilesResponse, String> {
+pub async fn ensure_minecraft_files(
+    request: EnsureMinecraftFilesRequest,
+) -> Result<EnsureMinecraftFilesResponse, String> {
     let instance = request.instance;
     let storage_dir = expand_path(&request.minecraft_storage_directory)?;
-    fs::create_dir_all(&storage_dir).map_err(|error| format!("Cannot create Minecraft storage directory {}: {error}", storage_dir.display()))?;
+    fs::create_dir_all(&storage_dir).map_err(|error| {
+        format!(
+            "Cannot create Minecraft storage directory {}: {error}",
+            storage_dir.display()
+        )
+    })?;
 
     let client = Client::new();
     let manifest = client
@@ -242,7 +271,12 @@ pub async fn ensure_minecraft_files(request: EnsureMinecraftFilesRequest) -> Res
         .versions
         .into_iter()
         .find(|version| version.id == instance.minecraft_version)
-        .ok_or_else(|| format!("Minecraft version {} was not found in Mojang's version manifest.", instance.minecraft_version))?;
+        .ok_or_else(|| {
+            format!(
+                "Minecraft version {} was not found in Mojang's version manifest.",
+                instance.minecraft_version
+            )
+        })?;
     let version_dir = storage_dir.join("versions").join(&manifest_version.id);
     let version_json_path = version_dir.join(format!("{}.json", manifest_version.id));
 
@@ -254,12 +288,24 @@ pub async fn ensure_minecraft_files(request: EnsureMinecraftFilesRequest) -> Res
         bytes_downloaded += downloaded;
     }
 
-    let version_raw = fs::read_to_string(&version_json_path)
-        .map_err(|error| format!("Cannot read version JSON {}: {error}", version_json_path.display()))?;
-    let version: VersionJson = serde_json::from_str(&version_raw)
-        .map_err(|error| format!("Cannot parse version JSON {}: {error}", version_json_path.display()))?;
+    let version_raw = fs::read_to_string(&version_json_path).map_err(|error| {
+        format!(
+            "Cannot read version JSON {}: {error}",
+            version_json_path.display()
+        )
+    })?;
+    let version: VersionJson = serde_json::from_str(&version_raw).map_err(|error| {
+        format!(
+            "Cannot parse version JSON {}: {error}",
+            version_json_path.display()
+        )
+    })?;
 
-    if let Some(client_download) = version.downloads.as_ref().and_then(|downloads| downloads.client.as_ref()) {
+    if let Some(client_download) = version
+        .downloads
+        .as_ref()
+        .and_then(|downloads| downloads.client.as_ref())
+    {
         let client_jar_path = version_dir.join(format!("{}.jar", manifest_version.id));
         let downloaded = download_to_file(&client, &client_download.url, &client_jar_path).await?;
         if downloaded > 0 {
@@ -274,7 +320,12 @@ pub async fn ensure_minecraft_files(request: EnsureMinecraftFilesRequest) -> Res
         }
 
         if let Some((artifact_path, url)) = library_artifact_path_url(library) {
-            let downloaded = download_to_file(&client, &url, &storage_dir.join("libraries").join(&artifact_path)).await?;
+            let downloaded = download_to_file(
+                &client,
+                &url,
+                &storage_dir.join("libraries").join(&artifact_path),
+            )
+            .await?;
             if downloaded > 0 {
                 files_downloaded += 1;
                 bytes_downloaded += downloaded;
@@ -283,7 +334,12 @@ pub async fn ensure_minecraft_files(request: EnsureMinecraftFilesRequest) -> Res
 
         if let Some(native_artifact) = native_artifact(library) {
             if let Some(url) = &native_artifact.url {
-                let downloaded = download_to_file(&client, url, &storage_dir.join("libraries").join(&native_artifact.path)).await?;
+                let downloaded = download_to_file(
+                    &client,
+                    url,
+                    &storage_dir.join("libraries").join(&native_artifact.path),
+                )
+                .await?;
                 if downloaded > 0 {
                     files_downloaded += 1;
                     bytes_downloaded += downloaded;
@@ -294,21 +350,39 @@ pub async fn ensure_minecraft_files(request: EnsureMinecraftFilesRequest) -> Res
 
     if let Some(asset_index) = &version.asset_index {
         if let Some(url) = &asset_index.url {
-            let asset_index_path = storage_dir.join("assets").join("indexes").join(format!("{}.json", asset_index.id));
+            let asset_index_path = storage_dir
+                .join("assets")
+                .join("indexes")
+                .join(format!("{}.json", asset_index.id));
             let downloaded = download_to_file(&client, url, &asset_index_path).await?;
             if downloaded > 0 {
                 files_downloaded += 1;
                 bytes_downloaded += downloaded;
             }
 
-            let raw = fs::read_to_string(&asset_index_path)
-                .map_err(|error| format!("Cannot read asset index {}: {error}", asset_index_path.display()))?;
-            let assets = serde_json::from_str::<AssetObjects>(&raw)
-                .map_err(|error| format!("Cannot parse asset index {}: {error}", asset_index_path.display()))?;
+            let raw = fs::read_to_string(&asset_index_path).map_err(|error| {
+                format!(
+                    "Cannot read asset index {}: {error}",
+                    asset_index_path.display()
+                )
+            })?;
+            let assets = serde_json::from_str::<AssetObjects>(&raw).map_err(|error| {
+                format!(
+                    "Cannot parse asset index {}: {error}",
+                    asset_index_path.display()
+                )
+            })?;
 
             for asset in assets.objects.values() {
-                let prefix = asset.hash.get(0..2).ok_or_else(|| "Asset hash was invalid.".to_string())?;
-                let path = storage_dir.join("assets").join("objects").join(prefix).join(&asset.hash);
+                let prefix = asset
+                    .hash
+                    .get(0..2)
+                    .ok_or_else(|| "Asset hash was invalid.".to_string())?;
+                let path = storage_dir
+                    .join("assets")
+                    .join("objects")
+                    .join(prefix)
+                    .join(&asset.hash);
                 let url = format!("{ASSET_OBJECT_BASE_URL}/{prefix}/{}", asset.hash);
                 let downloaded = download_to_file(&client, &url, &path).await?;
                 if downloaded > 0 {
@@ -334,7 +408,9 @@ pub async fn ensure_minecraft_files(request: EnsureMinecraftFilesRequest) -> Res
 }
 
 #[tauri::command]
-pub fn start_minecraft_process(request: StartMinecraftRequest) -> Result<ProcessLaunchResponse, String> {
+pub fn start_minecraft_process(
+    request: StartMinecraftRequest,
+) -> Result<ProcessLaunchResponse, String> {
     let instance = request.instance;
     let account = request.account;
     let game_dir = expand_path(&instance.game_directory)?;
@@ -342,11 +418,19 @@ pub fn start_minecraft_process(request: StartMinecraftRequest) -> Result<Process
     let java_path = expand_path(&instance.java_path)?;
 
     if !game_dir.exists() {
-        fs::create_dir_all(&game_dir).map_err(|error| format!("Cannot create game directory {}: {error}", game_dir.display()))?;
+        fs::create_dir_all(&game_dir).map_err(|error| {
+            format!(
+                "Cannot create game directory {}: {error}",
+                game_dir.display()
+            )
+        })?;
     }
 
     if !java_path.exists() {
-        return Err(format!("Java executable was not found at {}.", java_path.display()));
+        return Err(format!(
+            "Java executable was not found at {}.",
+            java_path.display()
+        ));
     }
 
     let (version_id, version_json_path) = find_version_json(&instance, &game_dir, &storage_dir).ok_or_else(|| {
@@ -362,23 +446,42 @@ pub fn start_minecraft_process(request: StartMinecraftRequest) -> Result<Process
     let client_jar = find_client_jar(&instance.minecraft_version, &game_dir, &storage_dir)
         .or_else(|| find_client_jar(&version_id, &game_dir, &storage_dir))
         .ok_or_else(|| format!("Client jar for {version_id} was not found."))?;
-    let classpath = build_classpath(&version, parent_version.as_ref(), &client_jar, &game_dir, &storage_dir)?;
-    let access_token = minecraft_access_token(&account)?;
+    let classpath = build_classpath(
+        &version,
+        parent_version.as_ref(),
+        &client_jar,
+        &game_dir,
+        &storage_dir,
+    )?;
+    let account_session = minecraft_account_session(&account)?;
     let assets_index = version
         .asset_index
         .as_ref()
         .map(|asset_index| asset_index.id.clone())
-        .or_else(|| parent_version.as_ref().and_then(|parent| parent.asset_index.as_ref().map(|asset_index| asset_index.id.clone())))
+        .or_else(|| {
+            parent_version.as_ref().and_then(|parent| {
+                parent
+                    .asset_index
+                    .as_ref()
+                    .map(|asset_index| asset_index.id.clone())
+            })
+        })
         .or(version.assets.clone())
-        .or_else(|| parent_version.as_ref().and_then(|parent| parent.assets.clone()))
+        .or_else(|| {
+            parent_version
+                .as_ref()
+                .and_then(|parent| parent.assets.clone())
+        })
         .unwrap_or_else(|| "legacy".to_string());
-    let assets_dir = first_existing_path(&[
-        game_dir.join("assets"),
-        storage_dir.join("assets"),
-    ])
-    .unwrap_or_else(|| game_dir.join("assets"));
+    let assets_dir = first_existing_path(&[game_dir.join("assets"), storage_dir.join("assets")])
+        .unwrap_or_else(|| game_dir.join("assets"));
     let natives_dir = game_dir.join("natives").join(&instance.id);
-    fs::create_dir_all(&natives_dir).map_err(|error| format!("Cannot create natives directory {}: {error}", natives_dir.display()))?;
+    fs::create_dir_all(&natives_dir).map_err(|error| {
+        format!(
+            "Cannot create natives directory {}: {error}",
+            natives_dir.display()
+        )
+    })?;
     if let Some(parent) = &parent_version {
         extract_natives(parent, &game_dir, &storage_dir, &natives_dir)?;
     }
@@ -386,25 +489,62 @@ pub fn start_minecraft_process(request: StartMinecraftRequest) -> Result<Process
 
     let mut replacements = HashMap::new();
     replacements.insert("auth_player_name".to_string(), account.username.clone());
-    replacements.insert("version_name".to_string(), version.id.clone());
-    replacements.insert("game_directory".to_string(), game_dir.to_string_lossy().to_string());
-    replacements.insert("assets_root".to_string(), assets_dir.to_string_lossy().to_string());
+    replacements.insert("version_name".to_string(), "Prism Launcher".to_string());
+    replacements.insert(
+        "game_directory".to_string(),
+        game_dir.to_string_lossy().to_string(),
+    );
+    replacements.insert(
+        "assets_root".to_string(),
+        assets_dir.to_string_lossy().to_string(),
+    );
     replacements.insert("assets_index_name".to_string(), assets_index);
-    replacements.insert("auth_uuid".to_string(), account.uuid.replace('-', ""));
-    replacements.insert("auth_access_token".to_string(), access_token);
-    replacements.insert("user_type".to_string(), if account.r#type == "microsoft" { "msa" } else { "legacy" }.to_string());
+    replacements.insert(
+        "game_assets".to_string(),
+        assets_dir.to_string_lossy().to_string(),
+    );
+    let auth_uuid = account.uuid.replace('-', "");
+    replacements.insert("auth_uuid".to_string(), auth_uuid.clone());
+    replacements.insert(
+        "auth_access_token".to_string(),
+        account_session.access_token.clone(),
+    );
+    replacements.insert(
+        "auth_session".to_string(),
+        format!("token:{}:{auth_uuid}", account_session.access_token),
+    );
+    replacements.insert("clientid".to_string(), account_session.client_id);
+    replacements.insert("auth_xuid".to_string(), account_session.xuid);
+    replacements.insert("user_properties".to_string(), "{}".to_string());
+    replacements.insert("user_property_map".to_string(), "{}".to_string());
+    replacements.insert(
+        "user_type".to_string(),
+        if account.r#type == "microsoft" {
+            "msa"
+        } else {
+            "legacy"
+        }
+        .to_string(),
+    );
     replacements.insert(
         "version_type".to_string(),
         version
             .r#type
             .clone()
-            .or_else(|| parent_version.as_ref().and_then(|parent| parent.r#type.clone()))
+            .or_else(|| {
+                parent_version
+                    .as_ref()
+                    .and_then(|parent| parent.r#type.clone())
+            })
             .unwrap_or_else(|| "release".to_string()),
     );
     replacements.insert("classpath".to_string(), classpath.clone());
-    replacements.insert("natives_directory".to_string(), natives_dir.to_string_lossy().to_string());
-    replacements.insert("launcher_name".to_string(), "StellarLauncher".to_string());
-    replacements.insert("launcher_version".to_string(), "1.0.1".to_string());
+    replacements.insert(
+        "natives_directory".to_string(),
+        natives_dir.to_string_lossy().to_string(),
+    );
+    replacements.insert("launcher_name".to_string(), "Prism Launcher".to_string());
+    replacements.insert("launcher_version".to_string(), "1.0.2".to_string());
 
     let mut args = Vec::new();
     args.push(format!("-Xmx{}M", instance.ram_mb));
@@ -413,11 +553,19 @@ pub fn start_minecraft_process(request: StartMinecraftRequest) -> Result<Process
     args.push("-cp".to_string());
     args.push(classpath);
     args.push(version.main_class.clone());
-    args.extend(game_arguments(&version, parent_version.as_ref(), &replacements));
+    let collected_game_args = game_arguments(&version, parent_version.as_ref(), &replacements);
+    let game_args = prism_game_arguments(&collected_game_args, &replacements);
+    let debug_lines = launch_debug_lines(&account, &instance, &version, &game_args);
+    let display_game_args = game_args.clone();
+    args.extend(game_args);
 
     let log_path = game_dir.join(format!("stellar-launch-{}.log", instance.id));
-    let stdout = fs::File::create(&log_path).map_err(|error| format!("Cannot create launch log {}: {error}", log_path.display()))?;
-    let stderr = stdout.try_clone().map_err(|error| format!("Cannot attach launch log: {error}"))?;
+    let mut stdout = fs::File::create(&log_path)
+        .map_err(|error| format!("Cannot create launch log {}: {error}", log_path.display()))?;
+    write_launch_preamble(&mut stdout, &debug_lines, &display_game_args)?;
+    let stderr = stdout
+        .try_clone()
+        .map_err(|error| format!("Cannot attach launch log: {error}"))?;
     let mut command = Command::new(&java_path);
     command
         .args(args)
@@ -440,6 +588,7 @@ pub fn start_minecraft_process(request: StartMinecraftRequest) -> Result<Process
         instance_id: instance.id,
         process_id,
         log_path: log_path.to_string_lossy().to_string(),
+        debug_lines,
     })
 }
 
@@ -499,7 +648,8 @@ pub fn read_launch_log_tail(path: String, max_lines: Option<usize>) -> Result<Ve
         return Ok(Vec::new());
     }
 
-    let raw = fs::read_to_string(&path).map_err(|error| format!("Cannot read launch log {}: {error}", path.display()))?;
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("Cannot read launch log {}: {error}", path.display()))?;
     let limit = max_lines.unwrap_or(160);
     let lines = raw
         .lines()
@@ -515,11 +665,19 @@ pub fn read_launch_log_tail(path: String, max_lines: Option<usize>) -> Result<Ve
 
 async fn download_to_file(client: &Client, url: &str, path: &Path) -> Result<u64, String> {
     if path.exists() {
-        return Ok(0);
+        let size = fs::metadata(path)
+            .map_err(|error| format!("Cannot inspect {}: {error}", path.display()))?
+            .len();
+        if size > 0 {
+            return Ok(0);
+        }
+        fs::remove_file(path)
+            .map_err(|error| format!("Cannot remove empty download {}: {error}", path.display()))?;
     }
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("Cannot create directory {}: {error}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Cannot create directory {}: {error}", parent.display()))?;
     }
 
     let bytes = client
@@ -536,20 +694,34 @@ async fn download_to_file(client: &Client, url: &str, path: &Path) -> Result<u64
     Ok(bytes.len() as u64)
 }
 
-async fn ensure_loader_files(client: &Client, instance: &Instance, storage_dir: &Path) -> Result<(u32, u64), String> {
+async fn ensure_loader_files(
+    client: &Client,
+    instance: &Instance,
+    storage_dir: &Path,
+) -> Result<(u32, u64), String> {
     match instance.loader_type.as_str() {
-        "fabric" => ensure_meta_loader_profile(
-            client,
-            &format!("{FABRIC_PROFILE_URL}/{}/{}/profile/json", instance.minecraft_version, instance.loader_version),
-            storage_dir,
-        )
-        .await,
-        "quilt" => ensure_meta_loader_profile(
-            client,
-            &format!("{QUILT_PROFILE_URL}/{}/{}/profile/json", instance.minecraft_version, instance.loader_version),
-            storage_dir,
-        )
-        .await,
+        "fabric" => {
+            ensure_meta_loader_profile(
+                client,
+                &format!(
+                    "{FABRIC_PROFILE_URL}/{}/{}/profile/json",
+                    instance.minecraft_version, instance.loader_version
+                ),
+                storage_dir,
+            )
+            .await
+        }
+        "quilt" => {
+            ensure_meta_loader_profile(
+                client,
+                &format!(
+                    "{QUILT_PROFILE_URL}/{}/{}/profile/json",
+                    instance.minecraft_version, instance.loader_version
+                ),
+                storage_dir,
+            )
+            .await
+        }
         "forge" => {
             let coordinate = format!("{}-{}", instance.minecraft_version, instance.loader_version);
             let url = format!("{FORGE_MAVEN_URL}/net/minecraftforge/forge/{coordinate}/forge-{coordinate}-installer.jar");
@@ -566,7 +738,11 @@ async fn ensure_loader_files(client: &Client, instance: &Instance, storage_dir: 
     }
 }
 
-async fn ensure_meta_loader_profile(client: &Client, url: &str, storage_dir: &Path) -> Result<(u32, u64), String> {
+async fn ensure_meta_loader_profile(
+    client: &Client,
+    url: &str,
+    storage_dir: &Path,
+) -> Result<(u32, u64), String> {
     let profile = client
         .get(url)
         .send()
@@ -580,39 +756,76 @@ async fn ensure_meta_loader_profile(client: &Client, url: &str, storage_dir: &Pa
     write_loader_profile_and_libraries(client, storage_dir, &profile).await
 }
 
-async fn ensure_installer_loader_profile(client: &Client, url: &str, storage_dir: &Path) -> Result<(u32, u64), String> {
-    let installer_path = storage_dir.join("installers").join(url.rsplit('/').next().unwrap_or("loader-installer.jar"));
+async fn ensure_installer_loader_profile(
+    client: &Client,
+    url: &str,
+    storage_dir: &Path,
+) -> Result<(u32, u64), String> {
+    let installer_path = storage_dir
+        .join("installers")
+        .join(url.rsplit('/').next().unwrap_or("loader-installer.jar"));
     let mut files_downloaded = 0;
     let mut bytes_downloaded = download_to_file(client, url, &installer_path).await?;
     if bytes_downloaded > 0 {
         files_downloaded += 1;
     }
 
-    let file = fs::File::open(&installer_path).map_err(|error| format!("Cannot open loader installer {}: {error}", installer_path.display()))?;
-    let mut archive = ZipArchive::new(file).map_err(|error| format!("Cannot read loader installer {}: {error}", installer_path.display()))?;
+    let file = fs::File::open(&installer_path).map_err(|error| {
+        format!(
+            "Cannot open loader installer {}: {error}",
+            installer_path.display()
+        )
+    })?;
+    let mut archive = ZipArchive::new(file).map_err(|error| {
+        format!(
+            "Cannot read loader installer {}: {error}",
+            installer_path.display()
+        )
+    })?;
     let mut raw = String::new();
     archive
         .by_name("version.json")
-        .map_err(|_| format!("Loader installer {} did not contain version.json.", installer_path.display()))?
+        .map_err(|_| {
+            format!(
+                "Loader installer {} did not contain version.json.",
+                installer_path.display()
+            )
+        })?
         .read_to_string(&mut raw)
         .map_err(|error| format!("Cannot read loader version.json: {error}"))?;
-    let profile = serde_json::from_str::<VersionJson>(&raw).map_err(|error| format!("Cannot parse loader version.json: {error}"))?;
+    let profile = serde_json::from_str::<VersionJson>(&raw)
+        .map_err(|error| format!("Cannot parse loader version.json: {error}"))?;
     let result = write_loader_profile_and_libraries(client, storage_dir, &profile).await?;
     files_downloaded += result.0;
     bytes_downloaded += result.1;
     Ok((files_downloaded, bytes_downloaded))
 }
 
-async fn write_loader_profile_and_libraries(client: &Client, storage_dir: &Path, profile: &VersionJson) -> Result<(u32, u64), String> {
+async fn write_loader_profile_and_libraries(
+    client: &Client,
+    storage_dir: &Path,
+    profile: &VersionJson,
+) -> Result<(u32, u64), String> {
     let version_dir = storage_dir.join("versions").join(&profile.id);
-    fs::create_dir_all(&version_dir).map_err(|error| format!("Cannot create loader version directory {}: {error}", version_dir.display()))?;
+    fs::create_dir_all(&version_dir).map_err(|error| {
+        format!(
+            "Cannot create loader version directory {}: {error}",
+            version_dir.display()
+        )
+    })?;
     let profile_path = version_dir.join(format!("{}.json", profile.id));
     let mut files_downloaded = 0;
     let mut bytes_downloaded = 0;
 
     if !profile_path.exists() {
-        let raw = serde_json::to_vec_pretty(profile).map_err(|error| format!("Cannot serialize loader profile: {error}"))?;
-        fs::write(&profile_path, &raw).map_err(|error| format!("Cannot write loader profile {}: {error}", profile_path.display()))?;
+        let raw = serde_json::to_vec_pretty(profile)
+            .map_err(|error| format!("Cannot serialize loader profile: {error}"))?;
+        fs::write(&profile_path, &raw).map_err(|error| {
+            format!(
+                "Cannot write loader profile {}: {error}",
+                profile_path.display()
+            )
+        })?;
         files_downloaded += 1;
         bytes_downloaded += raw.len() as u64;
     }
@@ -623,7 +836,11 @@ async fn write_loader_profile_and_libraries(client: &Client, storage_dir: &Path,
     Ok((files_downloaded, bytes_downloaded))
 }
 
-async fn download_version_libraries(client: &Client, version: &VersionJson, storage_dir: &Path) -> Result<(u32, u64), String> {
+async fn download_version_libraries(
+    client: &Client,
+    version: &VersionJson,
+    storage_dir: &Path,
+) -> Result<(u32, u64), String> {
     let mut files_downloaded = 0;
     let mut bytes_downloaded = 0;
 
@@ -633,7 +850,8 @@ async fn download_version_libraries(client: &Client, version: &VersionJson, stor
         }
 
         if let Some((path, url)) = library_artifact_path_url(library) {
-            let downloaded = download_to_file(client, &url, &storage_dir.join("libraries").join(&path)).await?;
+            let downloaded =
+                download_to_file(client, &url, &storage_dir.join("libraries").join(&path)).await?;
             if downloaded > 0 {
                 files_downloaded += 1;
                 bytes_downloaded += downloaded;
@@ -642,7 +860,12 @@ async fn download_version_libraries(client: &Client, version: &VersionJson, stor
 
         if let Some(native_artifact) = native_artifact(library) {
             if let Some(url) = &native_artifact.url {
-                let downloaded = download_to_file(client, url, &storage_dir.join("libraries").join(&native_artifact.path)).await?;
+                let downloaded = download_to_file(
+                    client,
+                    url,
+                    &storage_dir.join("libraries").join(&native_artifact.path),
+                )
+                .await?;
                 if downloaded > 0 {
                     files_downloaded += 1;
                     bytes_downloaded += downloaded;
@@ -663,10 +886,17 @@ fn expand_path(path: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(expanded))
 }
 
-fn find_version_json(instance: &Instance, game_dir: &Path, storage_dir: &Path) -> Option<(String, PathBuf)> {
+fn find_version_json(
+    instance: &Instance,
+    game_dir: &Path,
+    storage_dir: &Path,
+) -> Option<(String, PathBuf)> {
     for version_id in version_candidates(instance) {
         for root in [game_dir, storage_dir] {
-            let path = root.join("versions").join(&version_id).join(format!("{version_id}.json"));
+            let path = root
+                .join("versions")
+                .join(&version_id)
+                .join(format!("{version_id}.json"));
             if path.exists() {
                 return Some((version_id, path));
             }
@@ -683,7 +913,9 @@ fn find_version_json(instance: &Instance, game_dir: &Path, storage_dir: &Path) -
             for entry in entries.flatten() {
                 let version_id = entry.file_name().to_string_lossy().to_string();
                 let lowered = version_id.to_lowercase();
-                if lowered.contains(&instance.loader_type) && lowered.contains(&instance.loader_version.to_lowercase()) {
+                if lowered.contains(&instance.loader_type)
+                    && lowered.contains(&instance.loader_version.to_lowercase())
+                {
                     let path = entry.path().join(format!("{version_id}.json"));
                     if path.exists() {
                         return Some((version_id, path));
@@ -699,17 +931,38 @@ fn find_version_json(instance: &Instance, game_dir: &Path, storage_dir: &Path) -
 fn version_candidates(instance: &Instance) -> Vec<String> {
     let mut candidates = Vec::new();
     if instance.loader_type != "vanilla" && !instance.loader_version.trim().is_empty() {
-        candidates.push(format!("{}-loader-{}-{}", instance.loader_type, instance.loader_version, instance.minecraft_version));
-        candidates.push(format!("{}-{}-{}", instance.loader_type, instance.loader_version, instance.minecraft_version));
-        candidates.push(format!("{}-{}-{}", instance.minecraft_version, instance.loader_type, instance.loader_version));
-        candidates.push(format!("{}-{}-{}", instance.minecraft_version, instance.loader_version, instance.loader_type));
-        candidates.push(format!("{}-{}", instance.loader_type, instance.loader_version));
+        candidates.push(format!(
+            "{}-loader-{}-{}",
+            instance.loader_type, instance.loader_version, instance.minecraft_version
+        ));
+        candidates.push(format!(
+            "{}-{}-{}",
+            instance.loader_type, instance.loader_version, instance.minecraft_version
+        ));
+        candidates.push(format!(
+            "{}-{}-{}",
+            instance.minecraft_version, instance.loader_type, instance.loader_version
+        ));
+        candidates.push(format!(
+            "{}-{}-{}",
+            instance.minecraft_version, instance.loader_version, instance.loader_type
+        ));
+        candidates.push(format!(
+            "{}-{}",
+            instance.loader_type, instance.loader_version
+        ));
         if instance.loader_type == "forge" {
-            candidates.push(format!("{}-forge-{}", instance.minecraft_version, instance.loader_version));
+            candidates.push(format!(
+                "{}-forge-{}",
+                instance.minecraft_version, instance.loader_version
+            ));
         }
         if instance.loader_type == "neoforge" {
             candidates.push(format!("neoforge-{}", instance.loader_version));
-            candidates.push(format!("{}-neoforge-{}", instance.minecraft_version, instance.loader_version));
+            candidates.push(format!(
+                "{}-neoforge-{}",
+                instance.minecraft_version, instance.loader_version
+            ));
         }
     }
     candidates.push(instance.minecraft_version.clone());
@@ -717,18 +970,30 @@ fn version_candidates(instance: &Instance) -> Vec<String> {
 }
 
 fn read_version_json(path: &Path) -> Result<VersionJson, String> {
-    let version_raw = fs::read_to_string(path).map_err(|error| format!("Cannot read version JSON {}: {error}", path.display()))?;
-    serde_json::from_str(&version_raw).map_err(|error| format!("Cannot parse version JSON {}: {error}", path.display()))
+    let version_raw = fs::read_to_string(path)
+        .map_err(|error| format!("Cannot read version JSON {}: {error}", path.display()))?;
+    serde_json::from_str(&version_raw)
+        .map_err(|error| format!("Cannot parse version JSON {}: {error}", path.display()))
 }
 
-fn find_parent_version(version: &VersionJson, game_dir: &Path, storage_dir: &Path) -> Result<Option<VersionJson>, String> {
+fn find_parent_version(
+    version: &VersionJson,
+    game_dir: &Path,
+    storage_dir: &Path,
+) -> Result<Option<VersionJson>, String> {
     let Some(parent_id) = &version.inherits_from else {
         return Ok(None);
     };
 
     let path = first_existing_path(&[
-        game_dir.join("versions").join(parent_id).join(format!("{parent_id}.json")),
-        storage_dir.join("versions").join(parent_id).join(format!("{parent_id}.json")),
+        game_dir
+            .join("versions")
+            .join(parent_id)
+            .join(format!("{parent_id}.json")),
+        storage_dir
+            .join("versions")
+            .join(parent_id)
+            .join(format!("{parent_id}.json")),
     ])
     .ok_or_else(|| format!("Parent Minecraft version JSON {parent_id} was not found."))?;
     Ok(Some(read_version_json(&path)?))
@@ -736,8 +1001,14 @@ fn find_parent_version(version: &VersionJson, game_dir: &Path, storage_dir: &Pat
 
 fn find_client_jar(version_id: &str, game_dir: &Path, storage_dir: &Path) -> Option<PathBuf> {
     first_existing_path(&[
-        game_dir.join("versions").join(version_id).join(format!("{version_id}.jar")),
-        storage_dir.join("versions").join(version_id).join(format!("{version_id}.jar")),
+        game_dir
+            .join("versions")
+            .join(version_id)
+            .join(format!("{version_id}.jar")),
+        storage_dir
+            .join("versions")
+            .join(version_id)
+            .join(format!("{version_id}.jar")),
     ])
 }
 
@@ -745,22 +1016,49 @@ fn first_existing_path(paths: &[PathBuf]) -> Option<PathBuf> {
     paths.iter().find(|path| path.exists()).cloned()
 }
 
-fn build_classpath(version: &VersionJson, parent: Option<&VersionJson>, client_jar: &Path, game_dir: &Path, storage_dir: &Path) -> Result<String, String> {
+fn build_classpath(
+    version: &VersionJson,
+    parent: Option<&VersionJson>,
+    client_jar: &Path,
+    game_dir: &Path,
+    storage_dir: &Path,
+) -> Result<String, String> {
     let mut paths = Vec::new();
     let mut missing = Vec::new();
     let mut library_indexes = HashMap::new();
 
     if let Some(parent_version) = parent {
-        collect_classpath_libraries(parent_version, game_dir, storage_dir, &mut paths, &mut library_indexes, &mut missing);
+        collect_classpath_libraries(
+            parent_version,
+            game_dir,
+            storage_dir,
+            &mut paths,
+            &mut library_indexes,
+            &mut missing,
+        );
     }
-    collect_classpath_libraries(version, game_dir, storage_dir, &mut paths, &mut library_indexes, &mut missing);
+    collect_classpath_libraries(
+        version,
+        game_dir,
+        storage_dir,
+        &mut paths,
+        &mut library_indexes,
+        &mut missing,
+    );
 
     if !missing.is_empty() {
-        return Err(format!("Missing Minecraft libraries: {}", missing.into_iter().take(8).collect::<Vec<_>>().join(", ")));
+        return Err(format!(
+            "Missing Minecraft libraries: {}",
+            missing.into_iter().take(8).collect::<Vec<_>>().join(", ")
+        ));
     }
 
     paths.push(client_jar.to_path_buf());
-    let separator = if cfg!(target_os = "windows") { ";" } else { ":" };
+    let separator = if cfg!(target_os = "windows") {
+        ";"
+    } else {
+        ":"
+    };
     Ok(paths
         .into_iter()
         .map(|path| path.to_string_lossy().to_string())
@@ -806,7 +1104,10 @@ fn library_identity(library: &Library, artifact_path: &str) -> String {
     if let Some(name) = &library.name {
         let parts = name.split(':').collect::<Vec<_>>();
         if parts.len() >= 2 {
-            let classifier = parts.get(3).map(|value| format!(":{value}")).unwrap_or_default();
+            let classifier = parts
+                .get(3)
+                .map(|value| format!(":{value}"))
+                .unwrap_or_default();
             return format!("{}:{}{}", parts[0], parts[1], classifier);
         }
     }
@@ -826,7 +1127,7 @@ fn native_artifact(library: &Library) -> Option<&LibraryArtifact> {
     let native_key = library
         .natives
         .as_ref()
-        .and_then(|natives| natives.get("windows"))
+        .and_then(|natives| natives.get(minecraft_os_name()))
         .map(|value| value.replace("${arch}", "64"))?;
 
     library
@@ -837,7 +1138,11 @@ fn native_artifact(library: &Library) -> Option<&LibraryArtifact> {
 }
 
 fn library_artifact_path_url(library: &Library) -> Option<(String, String)> {
-    if let Some(artifact) = library.downloads.as_ref().and_then(|downloads| downloads.artifact.as_ref()) {
+    if let Some(artifact) = library
+        .downloads
+        .as_ref()
+        .and_then(|downloads| downloads.artifact.as_ref())
+    {
         if let Some(url) = &artifact.url {
             return Some((artifact.path.clone(), url.clone()));
         }
@@ -850,7 +1155,10 @@ fn library_artifact_path_url(library: &Library) -> Option<(String, String)> {
         return None;
     }
 
-    Some((path.clone(), format!("{}/{}", base_url.trim_end_matches('/'), path)))
+    Some((
+        path.clone(),
+        format!("{}/{}", base_url.trim_end_matches('/'), path),
+    ))
 }
 
 fn maven_path_from_name(name: &str) -> Option<String> {
@@ -870,7 +1178,12 @@ fn maven_path_from_name(name: &str) -> Option<String> {
     Some(format!("{group}/{artifact}/{version}/{file}"))
 }
 
-fn extract_natives(version: &VersionJson, game_dir: &Path, storage_dir: &Path, natives_dir: &Path) -> Result<(), String> {
+fn extract_natives(
+    version: &VersionJson,
+    game_dir: &Path,
+    storage_dir: &Path,
+    natives_dir: &Path,
+) -> Result<(), String> {
     for library in &version.libraries {
         if !rules_allow(library.rules.as_deref()) {
             continue;
@@ -885,11 +1198,15 @@ fn extract_natives(version: &VersionJson, game_dir: &Path, storage_dir: &Path, n
         ]) else {
             return Err(format!("Missing native library {}", artifact.path));
         };
-        let file = fs::File::open(&path).map_err(|error| format!("Cannot open native jar {}: {error}", path.display()))?;
-        let mut archive = ZipArchive::new(file).map_err(|error| format!("Cannot read native jar {}: {error}", path.display()))?;
+        let file = fs::File::open(&path)
+            .map_err(|error| format!("Cannot open native jar {}: {error}", path.display()))?;
+        let mut archive = ZipArchive::new(file)
+            .map_err(|error| format!("Cannot read native jar {}: {error}", path.display()))?;
 
         for index in 0..archive.len() {
-            let mut entry = archive.by_index(index).map_err(|error| format!("Cannot read native jar entry: {error}"))?;
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|error| format!("Cannot read native jar entry: {error}"))?;
             let name = entry.name().replace('\\', "/");
             if entry.is_dir() || name.starts_with("META-INF/") {
                 continue;
@@ -899,10 +1216,18 @@ fn extract_natives(version: &VersionJson, game_dir: &Path, storage_dir: &Path, n
                 continue;
             };
             let output_path = natives_dir.join(file_name);
-            let mut output = fs::File::create(&output_path)
-                .map_err(|error| format!("Cannot create native file {}: {error}", output_path.display()))?;
-            io::copy(&mut entry, &mut output)
-                .map_err(|error| format!("Cannot extract native file {}: {error}", output_path.display()))?;
+            let mut output = fs::File::create(&output_path).map_err(|error| {
+                format!(
+                    "Cannot create native file {}: {error}",
+                    output_path.display()
+                )
+            })?;
+            io::copy(&mut entry, &mut output).map_err(|error| {
+                format!(
+                    "Cannot extract native file {}: {error}",
+                    output_path.display()
+                )
+            })?;
         }
     }
 
@@ -916,7 +1241,12 @@ fn rules_allow(rules: Option<&[Rule]>) -> bool {
     let mut allowed = false;
 
     for rule in rules {
-        let os_matches = rule.os.as_ref().and_then(|os| os.name.as_ref()).map(|name| name == "windows").unwrap_or(true);
+        let os_matches = rule
+            .os
+            .as_ref()
+            .and_then(|os| os.name.as_ref())
+            .map(|name| name == minecraft_os_name())
+            .unwrap_or(true);
         if os_matches {
             allowed = rule.action == "allow";
         }
@@ -925,18 +1255,49 @@ fn rules_allow(rules: Option<&[Rule]>) -> bool {
     allowed
 }
 
-fn minecraft_access_token(account: &Account) -> Result<String, String> {
+fn minecraft_os_name() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "macos") {
+        "osx"
+    } else {
+        "windows"
+    }
+}
+
+fn minecraft_account_session(account: &Account) -> Result<MinecraftAccountSession, String> {
     if account.r#type == "offline" {
-        return Ok("0".to_string());
+        return Ok(MinecraftAccountSession {
+            access_token: "0".to_string(),
+            xuid: String::new(),
+            client_id: String::new(),
+        });
     }
 
     let raw = read_token_bundle(&account.id)?;
-    let stored: Value = serde_json::from_str(&raw).map_err(|error| format!("Cannot parse stored token metadata: {error}"))?;
-    stored
+    let stored: Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("Cannot parse stored token metadata: {error}"))?;
+    let access_token = stored
         .get("minecraftAccessToken")
         .and_then(|value| value.as_str())
         .map(ToString::to_string)
-        .ok_or_else(|| "No Minecraft access token is stored for this account. Sign in again.".to_string())
+        .ok_or_else(|| {
+            "No Minecraft access token is stored for this account. Sign in again.".to_string()
+        })?;
+
+    Ok(MinecraftAccountSession {
+        access_token,
+        xuid: stored
+            .get("xboxUserId")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        client_id: stored
+            .get("microsoftClientId")
+            .and_then(|value| value.as_str())
+            .unwrap_or(DEFAULT_MICROSOFT_CLIENT_ID)
+            .to_string(),
+    })
 }
 
 fn read_token_bundle(account_id: &str) -> Result<String, String> {
@@ -951,23 +1312,66 @@ fn read_token_bundle(account_id: &str) -> Result<String, String> {
         return Ok(raw);
     }
 
-    fs::read_to_string(fallback_token_path(account_id)?)
-        .map_err(|_| "Minecraft token is missing for this account. Remove the account and sign in again.".to_string())
+    fs::read_to_string(fallback_token_path(account_id)?).map_err(|_| {
+        "Minecraft token is missing for this account. Remove the account and sign in again."
+            .to_string()
+    })
 }
 
 fn fallback_token_path(account_id: &str) -> Result<PathBuf, String> {
+    #[cfg(target_os = "linux")]
+    let base = std::env::var("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|_| {
+            std::env::var("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
+        })
+        .map_err(|_| {
+            "Cannot resolve Linux data directory for token fallback storage.".to_string()
+        })?;
+
+    #[cfg(not(target_os = "linux"))]
     let base = std::env::var("APPDATA")
         .map(PathBuf::from)
         .or_else(|_| std::env::var("LOCALAPPDATA").map(PathBuf::from))
         .map_err(|_| "Cannot resolve AppData directory for token fallback storage.".to_string())?;
     let safe_id = account_id
         .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || *character == '-' || *character == '_')
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || *character == '-' || *character == '_'
+        })
         .collect::<String>();
-    Ok(base.join("StellarLauncher").join("account-tokens").join(format!("{safe_id}.json")))
+    Ok(base
+        .join("StellarLauncher")
+        .join("account-tokens")
+        .join(format!("{safe_id}.json")))
 }
 
-fn game_arguments(version: &VersionJson, parent: Option<&VersionJson>, replacements: &HashMap<String, String>) -> Vec<String> {
+fn game_arguments(
+    version: &VersionJson,
+    parent: Option<&VersionJson>,
+    replacements: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut parent_args = parent
+        .map(|parent_version| game_arguments(parent_version, None, replacements))
+        .unwrap_or_default();
+    let own_args = own_game_arguments(version, replacements);
+
+    if own_args.is_empty() {
+        return parent_args;
+    }
+
+    if parent_args.is_empty() || contains_core_game_arguments(&own_args) {
+        return own_args;
+    }
+
+    parent_args.extend(own_args);
+    parent_args
+}
+
+fn own_game_arguments(
+    version: &VersionJson,
+    replacements: &HashMap<String, String>,
+) -> Vec<String> {
     if let Some(arguments) = &version.arguments {
         let mut args = Vec::new();
         for value in &arguments.game {
@@ -990,14 +1394,175 @@ fn game_arguments(version: &VersionJson, parent: Option<&VersionJson>, replaceme
             .collect();
     }
 
-    if let Some(parent_version) = parent {
-        return game_arguments(parent_version, None, replacements);
-    }
-
     Vec::new()
 }
 
-fn collect_argument_value(value: &Value, replacements: &HashMap<String, String>, args: &mut Vec<String>) {
+fn contains_core_game_arguments(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "--uuid" || arg == "--accessToken" || arg == "--username")
+}
+
+fn prism_game_arguments(
+    collected_args: &[String],
+    replacements: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut args = Vec::new();
+    let prism_base = [
+        ("--username", "auth_player_name"),
+        ("--version", "version_name"),
+        ("--gameDir", "game_directory"),
+        ("--assetsDir", "assets_root"),
+        ("--assetIndex", "assets_index_name"),
+        ("--uuid", "auth_uuid"),
+        ("--accessToken", "auth_access_token"),
+        ("--userProperties", "user_properties"),
+        ("--userType", "user_type"),
+        ("--versionType", "version_type"),
+    ];
+
+    for (argument, replacement_key) in prism_base {
+        if let Some(value) = replacements.get(replacement_key) {
+            args.push(argument.to_string());
+            args.push(value.clone());
+        }
+    }
+
+    args.extend(non_prism_extra_arguments(collected_args));
+    args
+}
+
+fn launch_debug_lines(
+    account: &Account,
+    instance: &Instance,
+    version: &VersionJson,
+    game_args: &[String],
+) -> Vec<String> {
+    let compact_uuid = account.uuid.replace('-', "");
+    vec![
+        "Launch debug".to_string(),
+        format!("account.username: {}", account.username),
+        format!("account.type: {}", account.r#type),
+        format!("account.uuid.raw: {}", account.uuid),
+        format!("account.uuid.compact: {compact_uuid}"),
+        format!("account.uuid.compact.length: {}", compact_uuid.len()),
+        format!("instance.minecraftVersion: {}", instance.minecraft_version),
+        format!("resolved.versionId: {}", version.id),
+        format!(
+            "accessToken: {}",
+            if argument_has_value(game_args, "--accessToken") {
+                "present"
+            } else {
+                "missing"
+            }
+        ),
+        format!("gameArgs: {}", redact_launch_args(game_args).join(" ")),
+    ]
+}
+
+fn argument_has_value(args: &[String], argument: &str) -> bool {
+    args.windows(2)
+        .any(|pair| pair[0] == argument && !pair[1].trim().is_empty())
+        || args
+            .iter()
+            .any(|arg| arg.starts_with(&format!("{argument}=")) && arg.len() > argument.len() + 1)
+}
+
+fn non_prism_extra_arguments(collected_args: &[String]) -> Vec<String> {
+    let mut extras = Vec::new();
+    let mut skip_next = false;
+
+    for arg in collected_args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        if is_prism_base_argument(arg) {
+            skip_next = !arg.contains('=');
+            continue;
+        }
+
+        extras.push(arg.clone());
+    }
+
+    extras
+}
+
+fn is_prism_base_argument(arg: &str) -> bool {
+    [
+        "--username",
+        "--version",
+        "--gameDir",
+        "--assetsDir",
+        "--assetIndex",
+        "--uuid",
+        "--accessToken",
+        "--clientId",
+        "--xuid",
+        "--userProperties",
+        "--userPropertyMap",
+        "--userType",
+        "--versionType",
+    ]
+    .iter()
+    .any(|base| arg == *base || arg.starts_with(&format!("{base}=")))
+}
+
+fn write_launch_preamble(
+    log: &mut fs::File,
+    debug_lines: &[String],
+    game_args: &[String],
+) -> Result<(), String> {
+    writeln!(log, "Stellar Launcher Debug:")
+        .map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
+    for line in debug_lines {
+        writeln!(log, "  {line}")
+            .map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
+    }
+    writeln!(log).map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
+    writeln!(log, "Params:")
+        .map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
+    for arg in redact_launch_args(game_args) {
+        writeln!(log, "  {arg}")
+            .map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
+    }
+    writeln!(log).map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
+    Ok(())
+}
+
+fn redact_launch_args(args: &[String]) -> Vec<String> {
+    let mut redacted = Vec::with_capacity(args.len());
+    let mut redact_next = false;
+
+    for arg in args {
+        if redact_next {
+            redacted.push("<redacted>".to_string());
+            redact_next = false;
+            continue;
+        }
+
+        if arg == "--accessToken" {
+            redacted.push(arg.clone());
+            redact_next = true;
+            continue;
+        }
+
+        if arg.starts_with("token:") {
+            redacted.push("token:<redacted>".to_string());
+            continue;
+        }
+
+        redacted.push(arg.clone());
+    }
+
+    redacted
+}
+
+fn collect_argument_value(
+    value: &Value,
+    replacements: &HashMap<String, String>,
+    args: &mut Vec<String>,
+) {
     if let Some(raw) = value.as_str() {
         if is_quick_play_argument(raw) {
             return;
@@ -1036,7 +1601,10 @@ fn object_rules_allow(value: Option<&Value>) -> bool {
     let mut allowed = false;
 
     for rule in rules {
-        let action = rule.get("action").and_then(|value| value.as_str()).unwrap_or("disallow");
+        let action = rule
+            .get("action")
+            .and_then(|value| value.as_str())
+            .unwrap_or("disallow");
         if rule.get("features").is_some() {
             continue;
         }
@@ -1044,7 +1612,7 @@ fn object_rules_allow(value: Option<&Value>) -> bool {
             .get("os")
             .and_then(|os| os.get("name"))
             .and_then(|name| name.as_str())
-            .map(|name| name == "windows")
+            .map(|name| name == minecraft_os_name())
             .unwrap_or(true);
 
         if os_matches {
@@ -1056,9 +1624,11 @@ fn object_rules_allow(value: Option<&Value>) -> bool {
 }
 
 fn replace_placeholders(value: &str, replacements: &HashMap<String, String>) -> String {
-    replacements.iter().fold(value.to_string(), |current, (key, replacement)| {
-        current.replace(&format!("${{{key}}}"), replacement)
-    })
+    replacements
+        .iter()
+        .fold(value.to_string(), |current, (key, replacement)| {
+            current.replace(&format!("${{{key}}}"), replacement)
+        })
 }
 
 fn split_args(value: &str) -> Vec<String> {
