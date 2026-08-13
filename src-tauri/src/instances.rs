@@ -1,3 +1,4 @@
+use futures_util::StreamExt;
 use keyring::Entry;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -5,12 +6,13 @@ use serde_json::Value;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
     io::{self, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
+use tauri::{AppHandle, Emitter};
 use zip::ZipArchive;
 
 const KEYRING_SERVICE: &str = "app.stellarlauncher.desktop";
@@ -22,10 +24,12 @@ const FABRIC_PROFILE_URL: &str = "https://meta.fabricmc.net/v2/versions/loader";
 const QUILT_PROFILE_URL: &str = "https://meta.quiltmc.org/v3/versions/loader";
 const FORGE_MAVEN_URL: &str = "https://maven.minecraftforge.net";
 const NEOFORGE_MAVEN_URL: &str = "https://maven.neoforged.net/releases";
+const MAVEN_CENTRAL_URL: &str = "https://repo1.maven.org/maven2";
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(target_os = "windows")]
 const DETACHED_PROCESS: u32 = 0x00000008;
+const TARGET_LWJGL3_VERSION: &str = "3.4.2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +92,24 @@ pub struct EnsureMinecraftFilesResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MinecraftDownloadProgress {
+    pub instance_id: String,
+    pub instance_name: String,
+    pub status: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub file_name: String,
+    pub target_path: String,
+}
+
+struct MinecraftDownloadContext<'a> {
+    app: &'a AppHandle,
+    instance_id: &'a str,
+    instance_name: &'a str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProcessLaunchResponse {
     pub state: String,
     pub message: String,
@@ -125,6 +147,36 @@ struct VersionJson {
     assets: Option<String>,
     #[serde(default)]
     r#type: Option<String>,
+    #[serde(default)]
+    logging: Option<VersionLogging>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgeInstallProfile {
+    #[serde(default)]
+    install: Option<ForgeInstallSection>,
+    #[serde(default)]
+    version_info: Option<VersionJson>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgeInstallSection {
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    file_path: Option<String>,
+}
+
+struct LoaderInstallerProfile {
+    version: VersionJson,
+    embedded_artifact: Option<EmbeddedInstallerArtifact>,
+}
+
+struct EmbeddedInstallerArtifact {
+    entry_name: String,
+    artifact_path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -139,9 +191,31 @@ struct DownloadFile {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct VersionLogging {
+    #[serde(default)]
+    client: Option<ClientLogging>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ClientLogging {
+    #[serde(default)]
+    argument: Option<String>,
+    #[serde(default)]
+    file: Option<LoggingFile>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LoggingFile {
+    id: String,
+    url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 struct VersionArguments {
     #[serde(default)]
     game: Vec<Value>,
+    #[serde(default)]
+    jvm: Vec<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -163,6 +237,8 @@ struct Library {
     natives: Option<HashMap<String, String>>,
     #[serde(default)]
     rules: Option<Vec<Rule>>,
+    #[serde(default, rename = "clientreq")]
+    client_req: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -191,6 +267,8 @@ struct Rule {
 struct RuleOs {
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    arch: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -245,10 +323,12 @@ pub fn build_launch_request(request: LaunchRequest) -> Result<LaunchRequest, Str
 
 #[tauri::command]
 pub async fn ensure_minecraft_files(
+    app: AppHandle,
     request: EnsureMinecraftFilesRequest,
 ) -> Result<EnsureMinecraftFilesResponse, String> {
     let instance = request.instance;
     let storage_dir = expand_path(&request.minecraft_storage_directory)?;
+    let game_dir = expand_path(&instance.game_directory)?;
     fs::create_dir_all(&storage_dir).map_err(|error| {
         format!(
             "Cannot create Minecraft storage directory {}: {error}",
@@ -282,7 +362,18 @@ pub async fn ensure_minecraft_files(
 
     let mut files_downloaded = 0;
     let mut bytes_downloaded = 0;
-    let downloaded = download_to_file(&client, &manifest_version.url, &version_json_path).await?;
+    let progress = MinecraftDownloadContext {
+        app: &app,
+        instance_id: &instance.id,
+        instance_name: &instance.name,
+    };
+    let downloaded = download_to_file(
+        &client,
+        &manifest_version.url,
+        &version_json_path,
+        Some(&progress),
+    )
+    .await?;
     if downloaded > 0 {
         files_downloaded += 1;
         bytes_downloaded += downloaded;
@@ -294,12 +385,13 @@ pub async fn ensure_minecraft_files(
             version_json_path.display()
         )
     })?;
-    let version: VersionJson = serde_json::from_str(&version_raw).map_err(|error| {
+    let mut version: VersionJson = serde_json::from_str(&version_raw).map_err(|error| {
         format!(
             "Cannot parse version JSON {}: {error}",
             version_json_path.display()
         )
     })?;
+    upgrade_lwjgl3_libraries(&mut version);
 
     if let Some(client_download) = version
         .downloads
@@ -307,7 +399,13 @@ pub async fn ensure_minecraft_files(
         .and_then(|downloads| downloads.client.as_ref())
     {
         let client_jar_path = version_dir.join(format!("{}.jar", manifest_version.id));
-        let downloaded = download_to_file(&client, &client_download.url, &client_jar_path).await?;
+        let downloaded = download_to_file(
+            &client,
+            &client_download.url,
+            &client_jar_path,
+            Some(&progress),
+        )
+        .await?;
         if downloaded > 0 {
             files_downloaded += 1;
             bytes_downloaded += downloaded;
@@ -315,6 +413,10 @@ pub async fn ensure_minecraft_files(
     }
 
     for library in &version.libraries {
+        if library.client_req == Some(false) {
+            continue;
+        }
+
         if !rules_allow(library.rules.as_deref()) {
             continue;
         }
@@ -324,6 +426,7 @@ pub async fn ensure_minecraft_files(
                 &client,
                 &url,
                 &storage_dir.join("libraries").join(&artifact_path),
+                Some(&progress),
             )
             .await?;
             if downloaded > 0 {
@@ -338,6 +441,7 @@ pub async fn ensure_minecraft_files(
                     &client,
                     url,
                     &storage_dir.join("libraries").join(&native_artifact.path),
+                    Some(&progress),
                 )
                 .await?;
                 if downloaded > 0 {
@@ -354,7 +458,8 @@ pub async fn ensure_minecraft_files(
                 .join("assets")
                 .join("indexes")
                 .join(format!("{}.json", asset_index.id));
-            let downloaded = download_to_file(&client, url, &asset_index_path).await?;
+            let downloaded =
+                download_to_file(&client, url, &asset_index_path, Some(&progress)).await?;
             if downloaded > 0 {
                 files_downloaded += 1;
                 bytes_downloaded += downloaded;
@@ -384,7 +489,7 @@ pub async fn ensure_minecraft_files(
                     .join(prefix)
                     .join(&asset.hash);
                 let url = format!("{ASSET_OBJECT_BASE_URL}/{prefix}/{}", asset.hash);
-                let downloaded = download_to_file(&client, &url, &path).await?;
+                let downloaded = download_to_file(&client, &url, &path, Some(&progress)).await?;
                 if downloaded > 0 {
                     files_downloaded += 1;
                     bytes_downloaded += downloaded;
@@ -393,11 +498,46 @@ pub async fn ensure_minecraft_files(
         }
     }
 
+    if let Some(logging) = version_logging_client(&version, None) {
+        if let Some(file) = &logging.file {
+            let logging_path = logging_config_path(&storage_dir, &file.id);
+            let downloaded =
+                download_to_file(&client, &file.url, &logging_path, Some(&progress)).await?;
+            if downloaded > 0 {
+                files_downloaded += 1;
+                bytes_downloaded += downloaded;
+            }
+        }
+    }
+
     if instance.loader_type != "vanilla" {
-        let loader_result = ensure_loader_files(&client, &instance, &storage_dir).await?;
+        let loader_result =
+            ensure_loader_files(&client, &instance, &storage_dir, &progress).await?;
         files_downloaded += loader_result.0;
         bytes_downloaded += loader_result.1;
     }
+
+    if let Some(lwjgl_version) = lwjgl_core_version(&version, None) {
+        let result = ensure_compatible_lwjgl_addons(
+            &client,
+            &game_dir,
+            &storage_dir,
+            &lwjgl_version,
+            &progress,
+        )
+        .await?;
+        files_downloaded += result.0;
+        bytes_downloaded += result.1;
+    }
+
+    emit_minecraft_download_progress(
+        &progress,
+        "completed",
+        bytes_downloaded,
+        Some(bytes_downloaded),
+        "Minecraft files ready",
+        &storage_dir,
+    );
 
     Ok(EnsureMinecraftFilesResponse {
         version_id: manifest_version.id,
@@ -475,6 +615,10 @@ pub fn start_minecraft_process(
         .unwrap_or_else(|| "legacy".to_string());
     let assets_dir = first_existing_path(&[game_dir.join("assets"), storage_dir.join("assets")])
         .unwrap_or_else(|| game_dir.join("assets"));
+    let logging_client = version_logging_client(&version, parent_version.as_ref());
+    let logging_path = logging_client
+        .and_then(|logging| logging.file.as_ref())
+        .map(|file| logging_config_path(&storage_dir, &file.id));
     let natives_dir = game_dir.join("natives").join(&instance.id);
     fs::create_dir_all(&natives_dir).map_err(|error| {
         format!(
@@ -503,6 +647,9 @@ pub fn start_minecraft_process(
         "game_assets".to_string(),
         assets_dir.to_string_lossy().to_string(),
     );
+    if let Some(path) = &logging_path {
+        replacements.insert("path".to_string(), path.to_string_lossy().to_string());
+    }
     let auth_uuid = account.uuid.replace('-', "");
     replacements.insert("auth_uuid".to_string(), auth_uuid.clone());
     replacements.insert(
@@ -546,23 +693,39 @@ pub fn start_minecraft_process(
     replacements.insert("launcher_name".to_string(), "Prism Launcher".to_string());
     replacements.insert("launcher_version".to_string(), "1.0.2".to_string());
 
-    let mut args = Vec::new();
-    args.push(format!("-Xmx{}M", instance.ram_mb));
-    args.extend(split_args(&instance.jvm_args));
-    args.push(format!("-Djava.library.path={}", natives_dir.display()));
-    args.push("-cp".to_string());
-    args.push(classpath);
-    args.push(version.main_class.clone());
     let collected_game_args = game_arguments(&version, parent_version.as_ref(), &replacements);
     let game_args = prism_game_arguments(&collected_game_args, &replacements);
-    let debug_lines = launch_debug_lines(&account, &instance, &version, &game_args);
+    let mut jvm_args = Vec::new();
+    jvm_args.push(format!("-Xmx{}M", instance.ram_mb));
+    jvm_args.extend(split_args(&instance.jvm_args));
+    if let Some(logging_argument) = logging_client
+        .and_then(|logging| logging.argument.as_ref())
+        .and_then(|argument| {
+            logging_path
+                .as_ref()
+                .map(|_| replace_placeholders(argument, &replacements))
+        })
+    {
+        jvm_args.push(logging_argument);
+    }
+    let version_jvm_args = jvm_arguments(&version, parent_version.as_ref(), &replacements);
+    if version_jvm_args.is_empty() {
+        jvm_args.extend(default_jvm_arguments(&natives_dir, &classpath));
+    } else {
+        jvm_args.extend(version_jvm_args);
+    }
+
+    let mut args = Vec::new();
+    args.extend(jvm_args.clone());
+    args.push(version.main_class.clone());
+    let debug_lines = launch_debug_lines(&account, &instance, &version, &jvm_args, &game_args);
     let display_game_args = game_args.clone();
     args.extend(game_args);
 
     let log_path = game_dir.join(format!("stellar-launch-{}.log", instance.id));
     let mut stdout = fs::File::create(&log_path)
         .map_err(|error| format!("Cannot create launch log {}: {error}", log_path.display()))?;
-    write_launch_preamble(&mut stdout, &debug_lines, &display_game_args)?;
+    write_launch_preamble(&mut stdout, &debug_lines, &jvm_args, &display_game_args)?;
     let stderr = stdout
         .try_clone()
         .map_err(|error| format!("Cannot attach launch log: {error}"))?;
@@ -663,7 +826,12 @@ pub fn read_launch_log_tail(path: String, max_lines: Option<usize>) -> Result<Ve
     Ok(lines)
 }
 
-async fn download_to_file(client: &Client, url: &str, path: &Path) -> Result<u64, String> {
+async fn download_to_file(
+    client: &Client,
+    url: &str,
+    path: &Path,
+    progress: Option<&MinecraftDownloadContext<'_>>,
+) -> Result<u64, String> {
     if path.exists() {
         let size = fs::metadata(path)
             .map_err(|error| format!("Cannot inspect {}: {error}", path.display()))?
@@ -680,24 +848,101 @@ async fn download_to_file(client: &Client, url: &str, path: &Path) -> Result<u64
             .map_err(|error| format!("Cannot create directory {}: {error}", parent.display()))?;
     }
 
-    let bytes = client
+    let response = client
         .get(url)
         .send()
         .await
         .map_err(|error| format!("Cannot download {url}: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("Download failed for {url}: {error}"))?
-        .bytes()
-        .await
-        .map_err(|error| format!("Cannot read download body from {url}: {error}"))?;
-    fs::write(path, &bytes).map_err(|error| format!("Cannot write {}: {error}", path.display()))?;
-    Ok(bytes.len() as u64)
+        .map_err(|error| format!("Download failed for {url}: {error}"))?;
+    let total_bytes = response.content_length();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("download")
+        .to_string();
+
+    if let Some(context) = progress {
+        emit_minecraft_download_progress(context, "downloading", 0, total_bytes, &file_name, path);
+    }
+
+    let temp_path = PathBuf::from(format!("{}.part", path.to_string_lossy()));
+    if temp_path.exists() {
+        fs::remove_file(&temp_path).map_err(|error| {
+            format!(
+                "Cannot remove stale partial download {}: {error}",
+                temp_path.display()
+            )
+        })?;
+    }
+
+    let mut output = fs::File::create(&temp_path)
+        .map_err(|error| format!("Cannot create {}: {error}", temp_path.display()))?;
+    let mut downloaded = 0_u64;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let bytes =
+            chunk.map_err(|error| format!("Cannot read download body from {url}: {error}"))?;
+        output
+            .write_all(&bytes)
+            .map_err(|error| format!("Cannot write {}: {error}", temp_path.display()))?;
+        downloaded += bytes.len() as u64;
+
+        if let Some(context) = progress {
+            emit_minecraft_download_progress(
+                context,
+                "downloading",
+                downloaded,
+                total_bytes,
+                &file_name,
+                path,
+            );
+        }
+    }
+
+    output
+        .flush()
+        .map_err(|error| format!("Cannot flush {}: {error}", temp_path.display()))?;
+    drop(output);
+    fs::rename(&temp_path, path).map_err(|error| {
+        format!(
+            "Cannot finalize download {} -> {}: {error}",
+            temp_path.display(),
+            path.display()
+        )
+    })?;
+
+    Ok(downloaded)
+}
+
+fn emit_minecraft_download_progress(
+    context: &MinecraftDownloadContext<'_>,
+    status: &str,
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+    file_name: &str,
+    target_path: &Path,
+) {
+    let _ = context.app.emit(
+        "minecraft-download-progress",
+        MinecraftDownloadProgress {
+            instance_id: context.instance_id.to_string(),
+            instance_name: context.instance_name.to_string(),
+            status: status.to_string(),
+            downloaded_bytes,
+            total_bytes,
+            file_name: file_name.to_string(),
+            target_path: target_path.to_string_lossy().to_string(),
+        },
+    );
 }
 
 async fn ensure_loader_files(
     client: &Client,
     instance: &Instance,
     storage_dir: &Path,
+    progress: &MinecraftDownloadContext<'_>,
 ) -> Result<(u32, u64), String> {
     match instance.loader_type.as_str() {
         "fabric" => {
@@ -708,6 +953,7 @@ async fn ensure_loader_files(
                     instance.minecraft_version, instance.loader_version
                 ),
                 storage_dir,
+                progress,
             )
             .await
         }
@@ -719,20 +965,44 @@ async fn ensure_loader_files(
                     instance.minecraft_version, instance.loader_version
                 ),
                 storage_dir,
+                progress,
             )
             .await
         }
         "forge" => {
             let coordinate = format!("{}-{}", instance.minecraft_version, instance.loader_version);
             let url = format!("{FORGE_MAVEN_URL}/net/minecraftforge/forge/{coordinate}/forge-{coordinate}-installer.jar");
-            ensure_installer_loader_profile(client, &url, storage_dir).await
+            match ensure_installer_loader_profile(client, &url, storage_dir, progress).await {
+                Ok(result) => Ok(result),
+                Err(error)
+                    if !instance
+                        .loader_version
+                        .ends_with(&format!("-{}", instance.minecraft_version)) =>
+                {
+                    let legacy_coordinate = format!(
+                        "{}-{}-{}",
+                        instance.minecraft_version,
+                        instance.loader_version,
+                        instance.minecraft_version
+                    );
+                    let legacy_url = format!(
+                        "{FORGE_MAVEN_URL}/net/minecraftforge/forge/{legacy_coordinate}/forge-{legacy_coordinate}-installer.jar"
+                    );
+                    ensure_installer_loader_profile(client, &legacy_url, storage_dir, progress)
+                        .await
+                        .map_err(|legacy_error| {
+                            format!("{error}; fallback Forge URL also failed: {legacy_error}")
+                        })
+                }
+                Err(error) => Err(error),
+            }
         }
         "neoforge" => {
             let url = format!(
                 "{NEOFORGE_MAVEN_URL}/net/neoforged/neoforge/{}/neoforge-{}-installer.jar",
                 instance.loader_version, instance.loader_version
             );
-            ensure_installer_loader_profile(client, &url, storage_dir).await
+            ensure_installer_loader_profile(client, &url, storage_dir, progress).await
         }
         _ => Ok((0, 0)),
     }
@@ -742,6 +1012,7 @@ async fn ensure_meta_loader_profile(
     client: &Client,
     url: &str,
     storage_dir: &Path,
+    progress: &MinecraftDownloadContext<'_>,
 ) -> Result<(u32, u64), String> {
     let profile = client
         .get(url)
@@ -753,19 +1024,21 @@ async fn ensure_meta_loader_profile(
         .json::<VersionJson>()
         .await
         .map_err(|error| format!("Cannot parse loader profile {url}: {error}"))?;
-    write_loader_profile_and_libraries(client, storage_dir, &profile).await
+    write_loader_profile_and_libraries(client, storage_dir, &profile, progress).await
 }
 
 async fn ensure_installer_loader_profile(
     client: &Client,
     url: &str,
     storage_dir: &Path,
+    progress: &MinecraftDownloadContext<'_>,
 ) -> Result<(u32, u64), String> {
     let installer_path = storage_dir
         .join("installers")
         .join(url.rsplit('/').next().unwrap_or("loader-installer.jar"));
     let mut files_downloaded = 0;
-    let mut bytes_downloaded = download_to_file(client, url, &installer_path).await?;
+    let mut bytes_downloaded =
+        download_to_file(client, url, &installer_path, Some(progress)).await?;
     if bytes_downloaded > 0 {
         files_downloaded += 1;
     }
@@ -782,29 +1055,169 @@ async fn ensure_installer_loader_profile(
             installer_path.display()
         )
     })?;
-    let mut raw = String::new();
-    archive
-        .by_name("version.json")
-        .map_err(|_| {
-            format!(
-                "Loader installer {} did not contain version.json.",
-                installer_path.display()
-            )
-        })?
-        .read_to_string(&mut raw)
-        .map_err(|error| format!("Cannot read loader version.json: {error}"))?;
-    let profile = serde_json::from_str::<VersionJson>(&raw)
-        .map_err(|error| format!("Cannot parse loader version.json: {error}"))?;
-    let result = write_loader_profile_and_libraries(client, storage_dir, &profile).await?;
+    let profile = read_loader_profile_from_installer(&mut archive, &installer_path)?;
+    if let Some(embedded_artifact) = &profile.embedded_artifact {
+        let result =
+            extract_embedded_installer_artifact(&mut archive, embedded_artifact, storage_dir)?;
+        files_downloaded += result.0;
+        bytes_downloaded += result.1;
+    }
+    let result =
+        write_loader_profile_and_libraries(client, storage_dir, &profile.version, progress).await?;
     files_downloaded += result.0;
     bytes_downloaded += result.1;
     Ok((files_downloaded, bytes_downloaded))
+}
+
+fn read_loader_profile_from_installer(
+    archive: &mut ZipArchive<fs::File>,
+    installer_path: &Path,
+) -> Result<LoaderInstallerProfile, String> {
+    if let Ok(raw) = read_zip_entry_to_string(archive, "version.json") {
+        return serde_json::from_str::<VersionJson>(&raw)
+            .map(|mut version| {
+                upgrade_lwjgl3_libraries(&mut version);
+                LoaderInstallerProfile {
+                    version,
+                    embedded_artifact: None,
+                }
+            })
+            .map_err(|error| format!("Cannot parse loader version.json: {error}"));
+    }
+
+    let raw = read_zip_entry_to_string(archive, "install_profile.json").map_err(|_| {
+        format!(
+            "Loader installer {} did not contain version.json or install_profile.json.",
+            installer_path.display()
+        )
+    })?;
+    let install_profile = serde_json::from_str::<ForgeInstallProfile>(&raw)
+        .map_err(|error| format!("Cannot parse Forge install_profile.json: {error}"))?;
+    let mut version_info = install_profile
+        .version_info
+        .ok_or_else(|| "Forge install_profile.json did not contain versionInfo.".to_string())?;
+
+    let mut embedded_artifact = None;
+    if let Some(install) = install_profile.install {
+        apply_forge_install_artifact_classifier(&mut version_info, &install);
+        embedded_artifact = embedded_installer_artifact(&install);
+    }
+    upgrade_lwjgl3_libraries(&mut version_info);
+
+    Ok(LoaderInstallerProfile {
+        version: version_info,
+        embedded_artifact,
+    })
+}
+
+fn apply_forge_install_artifact_classifier(
+    version_info: &mut VersionJson,
+    install: &ForgeInstallSection,
+) {
+    let Some((_entry_name, artifact_name)) = embedded_installer_artifact_name(install) else {
+        return;
+    };
+
+    for library in &mut version_info.libraries {
+        if library.name.as_deref() == install.path.as_deref() {
+            library.name = Some(artifact_name.clone());
+        }
+    }
+}
+
+fn embedded_installer_artifact(install: &ForgeInstallSection) -> Option<EmbeddedInstallerArtifact> {
+    let (entry_name, artifact_name) = embedded_installer_artifact_name(install)?;
+    Some(EmbeddedInstallerArtifact {
+        entry_name,
+        artifact_path: maven_path_from_name(&artifact_name)?,
+    })
+}
+
+fn embedded_installer_artifact_name(install: &ForgeInstallSection) -> Option<(String, String)> {
+    let Some(path) = install.path.as_deref() else {
+        return None;
+    };
+    let Some(file_path) = install.file_path.as_deref() else {
+        return None;
+    };
+    let Some(classifier) = file_path
+        .strip_suffix(".jar")
+        .and_then(|name| name.rsplit_once('-').map(|(_, classifier)| classifier))
+    else {
+        return None;
+    };
+
+    if classifier.is_empty() || path.ends_with(&format!(":{classifier}")) {
+        return None;
+    }
+
+    Some((file_path.to_string(), format!("{path}:{classifier}")))
+}
+
+fn extract_embedded_installer_artifact(
+    archive: &mut ZipArchive<fs::File>,
+    artifact: &EmbeddedInstallerArtifact,
+    storage_dir: &Path,
+) -> Result<(u32, u64), String> {
+    let target = storage_dir.join("libraries").join(&artifact.artifact_path);
+    if target.exists()
+        && fs::metadata(&target)
+            .map_err(|error| {
+                format!(
+                    "Cannot inspect embedded Forge artifact {}: {error}",
+                    target.display()
+                )
+            })?
+            .len()
+            > 0
+    {
+        return Ok((0, 0));
+    }
+
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Cannot create directory {}: {error}", parent.display()))?;
+    }
+
+    let mut entry = archive.by_name(&artifact.entry_name).map_err(|error| {
+        format!(
+            "Cannot find embedded Forge artifact {}: {error}",
+            artifact.entry_name
+        )
+    })?;
+    let mut output = fs::File::create(&target).map_err(|error| {
+        format!(
+            "Cannot create embedded Forge artifact {}: {error}",
+            target.display()
+        )
+    })?;
+    let bytes = io::copy(&mut entry, &mut output).map_err(|error| {
+        format!(
+            "Cannot extract embedded Forge artifact {}: {error}",
+            target.display()
+        )
+    })?;
+    Ok((1, bytes))
+}
+
+fn read_zip_entry_to_string(
+    archive: &mut ZipArchive<fs::File>,
+    name: &str,
+) -> Result<String, String> {
+    let mut raw = String::new();
+    archive
+        .by_name(name)
+        .map_err(|error| format!("Cannot find {name} in installer: {error}"))?
+        .read_to_string(&mut raw)
+        .map_err(|error| format!("Cannot read {name}: {error}"))?;
+    Ok(raw)
 }
 
 async fn write_loader_profile_and_libraries(
     client: &Client,
     storage_dir: &Path,
     profile: &VersionJson,
+    progress: &MinecraftDownloadContext<'_>,
 ) -> Result<(u32, u64), String> {
     let version_dir = storage_dir.join("versions").join(&profile.id);
     fs::create_dir_all(&version_dir).map_err(|error| {
@@ -830,7 +1243,7 @@ async fn write_loader_profile_and_libraries(
         bytes_downloaded += raw.len() as u64;
     }
 
-    let result = download_version_libraries(client, profile, storage_dir).await?;
+    let result = download_version_libraries(client, profile, storage_dir, progress).await?;
     files_downloaded += result.0;
     bytes_downloaded += result.1;
     Ok((files_downloaded, bytes_downloaded))
@@ -840,18 +1253,28 @@ async fn download_version_libraries(
     client: &Client,
     version: &VersionJson,
     storage_dir: &Path,
+    progress: &MinecraftDownloadContext<'_>,
 ) -> Result<(u32, u64), String> {
     let mut files_downloaded = 0;
     let mut bytes_downloaded = 0;
 
     for library in &version.libraries {
+        if library.client_req == Some(false) {
+            continue;
+        }
+
         if !rules_allow(library.rules.as_deref()) {
             continue;
         }
 
         if let Some((path, url)) = library_artifact_path_url(library) {
-            let downloaded =
-                download_to_file(client, &url, &storage_dir.join("libraries").join(&path)).await?;
+            let downloaded = download_to_file(
+                client,
+                &url,
+                &storage_dir.join("libraries").join(&path),
+                Some(progress),
+            )
+            .await?;
             if downloaded > 0 {
                 files_downloaded += 1;
                 bytes_downloaded += downloaded;
@@ -864,6 +1287,7 @@ async fn download_version_libraries(
                     client,
                     url,
                     &storage_dir.join("libraries").join(&native_artifact.path),
+                    Some(progress),
                 )
                 .await?;
                 if downloaded > 0 {
@@ -891,14 +1315,20 @@ fn find_version_json(
     game_dir: &Path,
     storage_dir: &Path,
 ) -> Option<(String, PathBuf)> {
-    for version_id in version_candidates(instance) {
+    let candidates = version_candidates(instance);
+    let vanilla_version_id = instance.minecraft_version.as_str();
+
+    for version_id in candidates
+        .iter()
+        .filter(|version_id| version_id.as_str() != vanilla_version_id)
+    {
         for root in [game_dir, storage_dir] {
             let path = root
                 .join("versions")
-                .join(&version_id)
+                .join(version_id)
                 .join(format!("{version_id}.json"));
             if path.exists() {
-                return Some((version_id, path));
+                return Some((version_id.clone(), path));
             }
         }
     }
@@ -917,7 +1347,9 @@ fn find_version_json(
                     && lowered.contains(&instance.loader_version.to_lowercase())
                 {
                     let path = entry.path().join(format!("{version_id}.json"));
-                    if path.exists() {
+                    if path.exists()
+                        && loader_profile_matches_instance(&version_id, &path, instance)
+                    {
                         return Some((version_id, path));
                     }
                 }
@@ -925,7 +1357,32 @@ fn find_version_json(
         }
     }
 
+    for root in [game_dir, storage_dir] {
+        let path = root
+            .join("versions")
+            .join(vanilla_version_id)
+            .join(format!("{vanilla_version_id}.json"));
+        if path.exists() {
+            return Some((vanilla_version_id.to_string(), path));
+        }
+    }
+
     None
+}
+
+fn loader_profile_matches_instance(version_id: &str, path: &Path, instance: &Instance) -> bool {
+    let minecraft_version = instance.minecraft_version.to_lowercase();
+    let version_id = version_id.to_lowercase();
+
+    if version_id.contains(&minecraft_version) {
+        return true;
+    }
+
+    read_version_json(path)
+        .ok()
+        .and_then(|version| version.inherits_from)
+        .map(|inherits_from| inherits_from.eq_ignore_ascii_case(&instance.minecraft_version))
+        .unwrap_or(false)
 }
 
 fn version_candidates(instance: &Instance) -> Vec<String> {
@@ -953,6 +1410,22 @@ fn version_candidates(instance: &Instance) -> Vec<String> {
         ));
         if instance.loader_type == "forge" {
             candidates.push(format!(
+                "{}-forge{}-{}",
+                instance.minecraft_version, instance.minecraft_version, instance.loader_version
+            ));
+            if !instance
+                .loader_version
+                .ends_with(&format!("-{}", instance.minecraft_version))
+            {
+                candidates.push(format!(
+                    "{}-forge{}-{}-{}",
+                    instance.minecraft_version,
+                    instance.minecraft_version,
+                    instance.loader_version,
+                    instance.minecraft_version
+                ));
+            }
+            candidates.push(format!(
                 "{}-forge-{}",
                 instance.minecraft_version, instance.loader_version
             ));
@@ -972,8 +1445,52 @@ fn version_candidates(instance: &Instance) -> Vec<String> {
 fn read_version_json(path: &Path) -> Result<VersionJson, String> {
     let version_raw = fs::read_to_string(path)
         .map_err(|error| format!("Cannot read version JSON {}: {error}", path.display()))?;
-    serde_json::from_str(&version_raw)
-        .map_err(|error| format!("Cannot parse version JSON {}: {error}", path.display()))
+    let mut version: VersionJson = serde_json::from_str(&version_raw)
+        .map_err(|error| format!("Cannot parse version JSON {}: {error}", path.display()))?;
+    upgrade_lwjgl3_libraries(&mut version);
+    Ok(version)
+}
+
+fn upgrade_lwjgl3_libraries(version: &mut VersionJson) {
+    for library in &mut version.libraries {
+        let Some(name) = library.name.as_deref() else {
+            continue;
+        };
+        let mut parts = name.split(':').map(ToString::to_string).collect::<Vec<_>>();
+        if parts.len() < 3
+            || parts[0] != "org.lwjgl"
+            || !parts[1].starts_with("lwjgl")
+            || !parts[2].starts_with("3.")
+        {
+            continue;
+        }
+
+        parts[2] = TARGET_LWJGL3_VERSION.to_string();
+        let upgraded_name = parts.join(":");
+        library.name = Some(upgraded_name.clone());
+        library.url = Some(MAVEN_CENTRAL_URL.to_string());
+
+        if let Some(downloads) = &mut library.downloads {
+            if let Some(artifact) = &mut downloads.artifact {
+                if let Some(path) = maven_path_from_name(&upgraded_name) {
+                    artifact.url = Some(format!("{MAVEN_CENTRAL_URL}/{path}"));
+                    artifact.path = path;
+                }
+            }
+            if let Some(classifiers) = &mut downloads.classifiers {
+                for (classifier, artifact) in classifiers {
+                    let classifier_name = format!(
+                        "{}:{}:{}:{}",
+                        parts[0], parts[1], TARGET_LWJGL3_VERSION, classifier
+                    );
+                    if let Some(path) = maven_path_from_name(&classifier_name) {
+                        artifact.url = Some(format!("{MAVEN_CENTRAL_URL}/{path}"));
+                        artifact.path = path;
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn find_parent_version(
@@ -1010,6 +1527,28 @@ fn find_client_jar(version_id: &str, game_dir: &Path, storage_dir: &Path) -> Opt
             .join(version_id)
             .join(format!("{version_id}.jar")),
     ])
+}
+
+fn version_logging_client<'a>(
+    version: &'a VersionJson,
+    parent: Option<&'a VersionJson>,
+) -> Option<&'a ClientLogging> {
+    version
+        .logging
+        .as_ref()
+        .and_then(|logging| logging.client.as_ref())
+        .or_else(|| {
+            parent.and_then(|parent_version| {
+                parent_version
+                    .logging
+                    .as_ref()
+                    .and_then(|logging| logging.client.as_ref())
+            })
+        })
+}
+
+fn logging_config_path(storage_dir: &Path, id: &str) -> PathBuf {
+    storage_dir.join("assets").join("log_configs").join(id)
 }
 
 fn first_existing_path(paths: &[PathBuf]) -> Option<PathBuf> {
@@ -1053,6 +1592,10 @@ fn build_classpath(
         ));
     }
 
+    if let Some(lwjgl_version) = lwjgl_core_version(version, parent) {
+        collect_compatible_lwjgl_addons(game_dir, storage_dir, &lwjgl_version, &mut paths);
+    }
+
     paths.push(client_jar.to_path_buf());
     let separator = if cfg!(target_os = "windows") {
         ";"
@@ -1075,6 +1618,10 @@ fn collect_classpath_libraries(
     missing: &mut Vec<String>,
 ) {
     for library in &version.libraries {
+        if library.client_req == Some(false) {
+            continue;
+        }
+
         if !rules_allow(library.rules.as_deref()) {
             continue;
         }
@@ -1098,6 +1645,168 @@ fn collect_classpath_libraries(
             }
         }
     }
+}
+
+fn lwjgl_core_version(version: &VersionJson, parent: Option<&VersionJson>) -> Option<String> {
+    version
+        .libraries
+        .iter()
+        .chain(
+            parent
+                .into_iter()
+                .flat_map(|parent| parent.libraries.iter()),
+        )
+        .filter_map(|library| library.name.as_deref())
+        .find_map(|name| {
+            let parts = name.split(':').collect::<Vec<_>>();
+            if parts.len() == 3 && parts[0] == "org.lwjgl" && parts[1] == "lwjgl" {
+                Some(parts[2].to_string())
+            } else {
+                None
+            }
+        })
+}
+
+async fn ensure_compatible_lwjgl_addons(
+    client: &Client,
+    game_dir: &Path,
+    storage_dir: &Path,
+    lwjgl_version: &str,
+    progress: &MinecraftDownloadContext<'_>,
+) -> Result<(u32, u64), String> {
+    let addons = incompatible_local_lwjgl_addons(game_dir, lwjgl_version);
+    let mut files_downloaded = 0;
+    let mut bytes_downloaded = 0;
+    let native_classifier = current_lwjgl_native_classifier();
+
+    for addon in addons {
+        for classifier in [None, Some(native_classifier)] {
+            let name = classifier
+                .map(|classifier| {
+                    format!("org.lwjgl:lwjgl-{}:{}:{classifier}", addon, lwjgl_version)
+                })
+                .unwrap_or_else(|| format!("org.lwjgl:lwjgl-{}:{}", addon, lwjgl_version));
+            let Some(path) = maven_path_from_name(&name) else {
+                continue;
+            };
+            let target = storage_dir.join("libraries").join(&path);
+            let url = lwjgl_addon_url(&path);
+            let downloaded = download_to_file(client, &url, &target, Some(progress)).await?;
+            if downloaded > 0 {
+                files_downloaded += 1;
+                bytes_downloaded += downloaded;
+            }
+        }
+    }
+
+    Ok((files_downloaded, bytes_downloaded))
+}
+
+fn collect_compatible_lwjgl_addons(
+    game_dir: &Path,
+    storage_dir: &Path,
+    lwjgl_version: &str,
+    paths: &mut Vec<PathBuf>,
+) {
+    let native_classifier = current_lwjgl_native_classifier();
+    for addon in incompatible_local_lwjgl_addons(game_dir, lwjgl_version) {
+        for classifier in [None, Some(native_classifier)] {
+            let name = classifier
+                .map(|classifier| {
+                    format!("org.lwjgl:lwjgl-{}:{}:{classifier}", addon, lwjgl_version)
+                })
+                .unwrap_or_else(|| format!("org.lwjgl:lwjgl-{}:{}", addon, lwjgl_version));
+            let Some(path) = maven_path_from_name(&name) else {
+                continue;
+            };
+            let target = storage_dir.join("libraries").join(path);
+            if target.exists() && !paths.contains(&target) {
+                paths.push(target);
+            }
+        }
+    }
+}
+
+fn current_lwjgl_native_classifier() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "natives-linux"
+    } else if cfg!(target_os = "macos") {
+        "natives-macos"
+    } else {
+        "natives-windows"
+    }
+}
+
+fn incompatible_local_lwjgl_addons(game_dir: &Path, lwjgl_version: &str) -> HashSet<String> {
+    let mut addons = HashSet::new();
+    collect_incompatible_local_lwjgl_addons(game_dir, lwjgl_version, 0, &mut addons);
+    addons
+}
+
+fn collect_incompatible_local_lwjgl_addons(
+    dir: &Path,
+    lwjgl_version: &str,
+    depth: usize,
+    addons: &mut HashSet<String>,
+) {
+    if depth > 4 {
+        return;
+    }
+
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_incompatible_local_lwjgl_addons(&path, lwjgl_version, depth + 1, addons);
+            continue;
+        }
+
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some((addon, version)) = parse_lwjgl_addon_file_name(file_name) else {
+            continue;
+        };
+
+        if version != lwjgl_version {
+            addons.insert(addon);
+        }
+    }
+}
+
+fn parse_lwjgl_addon_file_name(file_name: &str) -> Option<(String, String)> {
+    let normalized = file_name.strip_suffix(".jar")?;
+    let normalized = normalized.strip_prefix("lwjgl-")?;
+    if normalized.starts_with("3.") {
+        return None;
+    }
+
+    let (addon, version) = normalized.rsplit_once('-')?;
+    if addon.is_empty() || version.is_empty() || !version.chars().next()?.is_ascii_digit() {
+        return None;
+    }
+
+    let addon = addon.strip_suffix("-natives-windows").unwrap_or(addon);
+    let addon = addon.strip_suffix("-natives-linux").unwrap_or(addon);
+    let addon = addon.strip_suffix("-natives-macos").unwrap_or(addon);
+    let addon = addon.strip_suffix("-natives-macos-arm64").unwrap_or(addon);
+    let addon = addon
+        .strip_suffix("-natives-windows-arm64")
+        .unwrap_or(addon);
+    let addon = addon.strip_suffix("-natives-windows-x86").unwrap_or(addon);
+
+    if addon.is_empty() {
+        None
+    } else {
+        Some((addon.to_string(), version.to_string()))
+    }
+}
+
+fn lwjgl_addon_url(path: &str) -> String {
+    format!("{MAVEN_CENTRAL_URL}/{path}")
 }
 
 fn library_identity(library: &Library, artifact_path: &str) -> String {
@@ -1148,12 +1857,17 @@ fn library_artifact_path_url(library: &Library) -> Option<(String, String)> {
         }
     }
 
-    let name = library.name.as_ref()?;
-    let path = maven_path_from_name(name)?;
-    let base_url = library.url.as_deref().unwrap_or("");
-    if base_url.trim().is_empty() {
+    if library.downloads.is_some() && library.natives.is_some() {
         return None;
     }
+
+    let name = library.name.as_ref()?;
+    let path = maven_path_from_name(name)?;
+    let base_url = library
+        .url
+        .as_deref()
+        .filter(|url| !url.trim().is_empty())
+        .unwrap_or("https://libraries.minecraft.net");
 
     Some((
         path.clone(),
@@ -1185,6 +1899,10 @@ fn extract_natives(
     natives_dir: &Path,
 ) -> Result<(), String> {
     for library in &version.libraries {
+        if library.client_req == Some(false) {
+            continue;
+        }
+
         if !rules_allow(library.rules.as_deref()) {
             continue;
         }
@@ -1241,18 +1959,27 @@ fn rules_allow(rules: Option<&[Rule]>) -> bool {
     let mut allowed = false;
 
     for rule in rules {
-        let os_matches = rule
-            .os
-            .as_ref()
-            .and_then(|os| os.name.as_ref())
-            .map(|name| name == minecraft_os_name())
-            .unwrap_or(true);
-        if os_matches {
+        if rule.os.as_ref().map(rule_os_matches).unwrap_or(true) {
             allowed = rule.action == "allow";
         }
     }
 
     allowed
+}
+
+fn rule_os_matches(os: &RuleOs) -> bool {
+    let name_matches = os
+        .name
+        .as_ref()
+        .map(|name| name == minecraft_os_name())
+        .unwrap_or(true);
+    let arch_matches = os
+        .arch
+        .as_ref()
+        .map(|arch| arch == minecraft_arch_name())
+        .unwrap_or(true);
+
+    name_matches && arch_matches
 }
 
 fn minecraft_os_name() -> &'static str {
@@ -1262,6 +1989,14 @@ fn minecraft_os_name() -> &'static str {
         "osx"
     } else {
         "windows"
+    }
+}
+
+fn minecraft_arch_name() -> &'static str {
+    if cfg!(target_arch = "x86") {
+        "x86"
+    } else {
+        "x64"
     }
 }
 
@@ -1397,9 +2132,56 @@ fn own_game_arguments(
     Vec::new()
 }
 
+fn jvm_arguments(
+    version: &VersionJson,
+    parent: Option<&VersionJson>,
+    replacements: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut parent_args = parent
+        .map(|parent_version| jvm_arguments(parent_version, None, replacements))
+        .unwrap_or_default();
+    let own_args = own_jvm_arguments(version, replacements);
+
+    if own_args.is_empty() {
+        return parent_args;
+    }
+
+    if parent_args.is_empty() || contains_classpath_argument(&own_args) {
+        return own_args;
+    }
+
+    parent_args.extend(own_args);
+    parent_args
+}
+
+fn own_jvm_arguments(version: &VersionJson, replacements: &HashMap<String, String>) -> Vec<String> {
+    let Some(arguments) = &version.arguments else {
+        return Vec::new();
+    };
+
+    let mut args = Vec::new();
+    for value in &arguments.jvm {
+        collect_argument_value(value, replacements, &mut args);
+    }
+    args
+}
+
+fn default_jvm_arguments(natives_dir: &Path, classpath: &str) -> Vec<String> {
+    vec![
+        format!("-Djava.library.path={}", natives_dir.display()),
+        "-cp".to_string(),
+        classpath.to_string(),
+    ]
+}
+
 fn contains_core_game_arguments(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--uuid" || arg == "--accessToken" || arg == "--username")
+}
+
+fn contains_classpath_argument(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "-cp" || arg == "-classpath" || arg == "--class-path")
 }
 
 fn prism_game_arguments(
@@ -1435,6 +2217,7 @@ fn launch_debug_lines(
     account: &Account,
     instance: &Instance,
     version: &VersionJson,
+    jvm_args: &[String],
     game_args: &[String],
 ) -> Vec<String> {
     let compact_uuid = account.uuid.replace('-', "");
@@ -1455,6 +2238,7 @@ fn launch_debug_lines(
                 "missing"
             }
         ),
+        format!("jvmArgs: {}", redact_launch_args(jvm_args).join(" ")),
         format!("gameArgs: {}", redact_launch_args(game_args).join(" ")),
     ]
 }
@@ -1511,6 +2295,7 @@ fn is_prism_base_argument(arg: &str) -> bool {
 fn write_launch_preamble(
     log: &mut fs::File,
     debug_lines: &[String],
+    jvm_args: &[String],
     game_args: &[String],
 ) -> Result<(), String> {
     writeln!(log, "Stellar Launcher Debug:")
@@ -1520,7 +2305,14 @@ fn write_launch_preamble(
             .map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
     }
     writeln!(log).map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
-    writeln!(log, "Params:")
+    writeln!(log, "JVM Params:")
+        .map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
+    for arg in redact_launch_args(jvm_args) {
+        writeln!(log, "  {arg}")
+            .map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
+    }
+    writeln!(log).map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
+    writeln!(log, "Game Params:")
         .map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
     for arg in redact_launch_args(game_args) {
         writeln!(log, "  {arg}")
@@ -1608,14 +2400,20 @@ fn object_rules_allow(value: Option<&Value>) -> bool {
         if rule.get("features").is_some() {
             continue;
         }
-        let os_matches = rule
+        let name_matches = rule
             .get("os")
             .and_then(|os| os.get("name"))
             .and_then(|name| name.as_str())
             .map(|name| name == minecraft_os_name())
             .unwrap_or(true);
+        let arch_matches = rule
+            .get("os")
+            .and_then(|os| os.get("arch"))
+            .and_then(|arch| arch.as_str())
+            .map(|arch| arch == minecraft_arch_name())
+            .unwrap_or(true);
 
-        if os_matches {
+        if name_matches && arch_matches {
             allowed = action == "allow";
         }
     }

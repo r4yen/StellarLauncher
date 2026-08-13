@@ -33,7 +33,7 @@ import { JavaSetupProgress, setupAdoptiumJava } from "./services/javaSetupServic
 import { isMinecraftProcessRunning, startMinecraftProcess, stopMinecraftProcess, validateLaunch } from "./services/launchService";
 import { ModDownloadProgress, listMods } from "./services/modService";
 import { enrichModsWithModrinth } from "./services/modrinthService";
-import { ensureMinecraftFiles } from "./services/minecraftDownloaderService";
+import { ensureMinecraftFiles, MinecraftDownloadProgress } from "./services/minecraftDownloaderService";
 import { getMinecraftCacheKey, getMinecraftLocalPath, loadLocalMinecraftCache, saveLocalMinecraftCache } from "./services/minecraftStorageService";
 import {
   addPlayerNameSkin,
@@ -361,15 +361,22 @@ export default function App() {
   }, [runningInstances, settings.discordRichPresenceEnabled]);
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenMod: (() => void) | undefined;
+    let unlistenMinecraft: (() => void) | undefined;
     listen<ModDownloadProgress>("mod-download-progress", (event) => {
       applyModDownloadProgress(event.payload);
     }).then((dispose) => {
-      unlisten = dispose;
+      unlistenMod = dispose;
+    });
+    listen<MinecraftDownloadProgress>("minecraft-download-progress", (event) => {
+      applyMinecraftDownloadProgress(event.payload);
+    }).then((dispose) => {
+      unlistenMinecraft = dispose;
     });
 
     return () => {
-      unlisten?.();
+      unlistenMod?.();
+      unlistenMinecraft?.();
     };
   }, []);
 
@@ -586,6 +593,92 @@ export default function App() {
       finish: () => completeTasks("completed"),
       fail: () => completeTasks("error")
     };
+  };
+
+  const minecraftDownloadTaskId = (instanceId: string) => `minecraft-files-${instanceId}`;
+
+  const startMinecraftDownloadTask = (instance: Instance, targetPath: string): string => {
+    const now = new Date().toISOString();
+    const taskId = minecraftDownloadTaskId(instance.id);
+    const task: DownloadTask = {
+      id: taskId,
+      instanceId: instance.id,
+      instanceName: instance.name,
+      label: "Preparing Minecraft files",
+      targetPath,
+      status: "pending",
+      downloadedMb: 0,
+      totalMb: 1,
+      percent: 0,
+      etaSeconds: undefined,
+      startedAt: now,
+      updatedAt: now
+    };
+
+    setDownloadsOpen(true);
+    setDownloadTasks((current) => [task, ...current.filter((existing) => existing.id !== taskId)]);
+    return taskId;
+  };
+
+  const finishMinecraftDownloadTask = (taskId: string, status: "completed" | "error", label?: string) => {
+    setDownloadTasks((current) =>
+      current.map((task) =>
+        task.id === taskId
+          ? {
+              ...task,
+              label: label ?? task.label,
+              status,
+              downloadedMb: status === "completed" ? task.totalMb : task.downloadedMb,
+              percent: status === "completed" ? 100 : task.percent,
+              etaSeconds: status === "completed" ? 0 : undefined,
+              updatedAt: new Date().toISOString()
+            }
+          : task
+      )
+    );
+  };
+
+  const applyMinecraftDownloadProgress = (progress: MinecraftDownloadProgress) => {
+    const taskId = minecraftDownloadTaskId(progress.instanceId);
+    const now = new Date().toISOString();
+    const totalMb = progress.totalBytes ? Math.max(progress.totalBytes / 1024 / 1024, 0.01) : undefined;
+    const downloadedMb = progress.downloadedBytes / 1024 / 1024;
+    const isCompleted = progress.status === "completed";
+    const nowMs = Date.now();
+    const previousStats = downloadProgressStatsRef.current.get(taskId);
+    const elapsedSeconds = previousStats ? Math.max((nowMs - previousStats.updatedAtMs) / 1000, 0.001) : 0;
+    const instantSpeed = previousStats && downloadedMb > previousStats.downloadedMb ? (downloadedMb - previousStats.downloadedMb) / elapsedSeconds : 0;
+    const speedMbPerSecond =
+      instantSpeed > 0
+        ? previousStats?.speedMbPerSecond
+          ? previousStats.speedMbPerSecond * 0.65 + instantSpeed * 0.35
+          : instantSpeed
+        : previousStats?.speedMbPerSecond ?? 0;
+    downloadProgressStatsRef.current.set(taskId, { downloadedMb, updatedAtMs: nowMs, speedMbPerSecond });
+
+    setDownloadsOpen(true);
+    setDownloadTasks((current) => {
+      const existing = current.find((task) => task.id === taskId);
+      const nextTotalMb = isCompleted ? Math.max(downloadedMb, existing?.totalMb ?? 1) : (totalMb ?? existing?.totalMb ?? Math.max(downloadedMb, 1));
+      const percent = isCompleted ? 100 : totalMb ? Math.min((downloadedMb / totalMb) * 100, 99) : existing?.percent ?? 0;
+      const remainingMb = Math.max(nextTotalMb - downloadedMb, 0);
+      const nextTask: DownloadTask = {
+        id: taskId,
+        instanceId: progress.instanceId,
+        instanceName: progress.instanceName,
+        label: progress.fileName || existing?.label || "Minecraft files",
+        targetPath: progress.targetPath || existing?.targetPath || "",
+        status: isCompleted ? "completed" : "downloading",
+        downloadedMb: isCompleted ? nextTotalMb : Math.min(downloadedMb, nextTotalMb),
+        totalMb: nextTotalMb,
+        percent,
+        etaSeconds: isCompleted ? 0 : speedMbPerSecond > 0 ? Math.max(1, Math.round(remainingMb / speedMbPerSecond)) : existing?.etaSeconds,
+        startedAt: existing?.startedAt ?? now,
+        updatedAt: now
+      };
+
+      return existing ? current.map((task) => (task.id === taskId ? nextTask : task)) : [nextTask, ...current];
+    });
   };
 
   const createJavaSetupDownloadTasks = (): DownloadTask[] => {
@@ -833,7 +926,6 @@ export default function App() {
 
     const cacheKey = getMinecraftCacheKey(instance);
     const localPath = getMinecraftLocalPath(instance, settings);
-    const tasks = createMinecraftDownloadTasks(instance);
 
     setLaunchStatus({
       state: "downloading",
@@ -843,11 +935,11 @@ export default function App() {
     });
     updateRunningInstance(runId, "downloading", `Preparing Minecraft files for ${instance.name}`, `Checking local storage at ${localPath}`);
 
-    const downloadIndicator = beginDownloadTasks(tasks);
+    const downloadTaskId = startMinecraftDownloadTask(instance, localPath);
 
     try {
       const downloadResult = await ensureMinecraftFiles(instance, settings);
-      downloadIndicator.finish();
+      finishMinecraftDownloadTask(downloadTaskId, "completed", "Minecraft files ready");
       const nextCache = Array.from(new Set([...minecraftCache, cacheKey]));
       setMinecraftCache(nextCache);
       await saveLocalMinecraftCache(nextCache);
@@ -859,7 +951,7 @@ export default function App() {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      downloadIndicator.fail();
+      finishMinecraftDownloadTask(downloadTaskId, "error", message);
       setLaunchStatus({
         state: "error",
         message,

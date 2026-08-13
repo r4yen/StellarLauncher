@@ -16,7 +16,13 @@ const loaderFallbacks: Record<Exclude<LoaderType, "vanilla">, LoaderVersion[]> =
   forge: [
     { id: "61.1.8", stable: true },
     { id: "55.0.26", stable: true },
-    { id: "47.4.12", stable: true }
+    { id: "47.4.12", stable: true },
+    { id: "36.2.42", stable: true },
+    { id: "14.23.5.2860", stable: true },
+    { id: "12.18.3.2511", stable: true },
+    { id: "11.15.1.2318", stable: true },
+    { id: "11.14.4.1577", stable: true },
+    { id: "10.13.4.1614", stable: true }
   ],
   neoforge: [
     { id: "26.1.2.71", stable: true },
@@ -52,15 +58,14 @@ async function fetchText(url: string): Promise<string> {
   return response.text();
 }
 
-function uniqueVersions(versions: LoaderVersion[], limit = 120): LoaderVersion[] {
+function uniqueVersions(versions: LoaderVersion[]): LoaderVersion[] {
   const seen = new Set<string>();
   return versions
     .filter((version) => {
       if (!version.id || seen.has(version.id)) return false;
       seen.add(version.id);
       return true;
-    })
-    .slice(0, limit);
+    });
 }
 
 function fromMetaVersions(versions: MetaLoaderVersion[], stableFallback: (version: string) => boolean): LoaderVersion[] {
@@ -84,7 +89,6 @@ function parseMavenVersions(xml: string): string[] {
 function fromMavenVersions(versions: string[]): LoaderVersion[] {
   return uniqueVersions(
     [...versions]
-      .reverse()
       .map((version) => ({
         id: version,
         stable: !/alpha|beta|rc|snapshot/i.test(version)
@@ -97,7 +101,18 @@ function forgeLoaderVersionsForMinecraft(versions: string[], minecraftVersion?: 
 
   const prefix = `${minecraftVersion}-`;
   const matching = versions.filter((version) => version.startsWith(prefix)).map((version) => version.slice(prefix.length));
-  return fromMavenVersions(matching.length > 0 ? matching : versions);
+  if (matching.length > 0) return fromMavenVersions(matching);
+
+  const fallbackByMinecraftVersion: Record<string, LoaderVersion[]> = {
+    "1.16.5": [{ id: "36.2.42", stable: true }],
+    "1.12.2": [{ id: "14.23.5.2860", stable: true }],
+    "1.10.2": [{ id: "12.18.3.2511", stable: true }],
+    "1.8.9": [{ id: "11.15.1.2318-1.8.9", stable: true }],
+    "1.8": [{ id: "11.14.4.1577", stable: true }],
+    "1.7.10": [{ id: "10.13.4.1614-1.7.10", stable: true }]
+  };
+
+  return fallbackByMinecraftVersion[minecraftVersion] ?? fromMavenVersions(versions);
 }
 
 export class FabricService {
