@@ -17,7 +17,7 @@ const XSTS_AUTH_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
 const MINECRAFT_LOGIN_URL: &str = "https://api.minecraftservices.com/launcher/login";
 const MINECRAFT_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
 const KEYRING_SERVICE: &str = "app.stellarlauncher.desktop";
-const USER_AGENT: &str = "StellarLauncher/1.0.2";
+const USER_AGENT: &str = "StellarLauncher/1.0.3";
 
 #[derive(Default)]
 pub struct AuthState {

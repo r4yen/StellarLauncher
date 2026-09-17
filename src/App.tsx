@@ -133,7 +133,21 @@ export default function App() {
         const loadedMinecraftCache = await loadLocalMinecraftCache();
 
         setLoadingStep(54, "Restoring running instances");
-        const loadedRunningInstances = loadRunningInstancesLocal();
+        const storedRunningInstances = loadRunningInstancesLocal();
+        const loadedRunningInstances = (
+          await Promise.all(
+            storedRunningInstances.map(async (running) => {
+              if (!running.processId) return undefined;
+
+              try {
+                return (await isMinecraftProcessRunning(running.processId)) ? running : undefined;
+              } catch {
+                return undefined;
+              }
+            })
+          )
+        ).filter((running): running is RunningInstance => running !== undefined);
+        saveRunningInstancesLocal(loadedRunningInstances);
 
         const loadedModrinthMods: Record<string, ModFile[]> = {};
         if (sortedInstances.length > 0) {
@@ -397,7 +411,8 @@ export default function App() {
             const alive = await isMinecraftProcessRunning(running.processId);
             return { running, alive };
           } catch {
-            return { running, alive: true };
+            // An entry that cannot be verified must not remain as an unstoppable ghost.
+            return { running, alive: false };
           }
         })
       );

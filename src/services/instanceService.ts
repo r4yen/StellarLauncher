@@ -81,7 +81,7 @@ export function sortInstances(instances: Instance[]): Instance[] {
 function normalizeInstanceOrder(instances: Instance[]): Instance[] {
   let favoriteOrder = 0;
   let regularOrder = 0;
-  return sortInstances(instances).map((instance) => {
+  return instances.map((instance) => {
     if (instance.isFavorite) {
       return { ...instance, order: favoriteOrder++ };
     }

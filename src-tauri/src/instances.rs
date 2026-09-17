@@ -29,7 +29,6 @@ const MAVEN_CENTRAL_URL: &str = "https://repo1.maven.org/maven2";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(target_os = "windows")]
 const DETACHED_PROCESS: u32 = 0x00000008;
-const TARGET_LWJGL3_VERSION: &str = "3.4.2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -385,13 +384,12 @@ pub async fn ensure_minecraft_files(
             version_json_path.display()
         )
     })?;
-    let mut version: VersionJson = serde_json::from_str(&version_raw).map_err(|error| {
+    let version: VersionJson = serde_json::from_str(&version_raw).map_err(|error| {
         format!(
             "Cannot parse version JSON {}: {error}",
             version_json_path.display()
         )
     })?;
-    upgrade_lwjgl3_libraries(&mut version);
 
     if let Some(client_download) = version
         .downloads
@@ -548,7 +546,15 @@ pub async fn ensure_minecraft_files(
 }
 
 #[tauri::command]
-pub fn start_minecraft_process(
+pub async fn start_minecraft_process(
+    request: StartMinecraftRequest,
+) -> Result<ProcessLaunchResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || start_minecraft_process_blocking(request))
+        .await
+        .map_err(|error| format!("Minecraft launch worker failed: {error}"))?
+}
+
+fn start_minecraft_process_blocking(
     request: StartMinecraftRequest,
 ) -> Result<ProcessLaunchResponse, String> {
     let instance = request.instance;
@@ -691,13 +697,12 @@ pub fn start_minecraft_process(
         natives_dir.to_string_lossy().to_string(),
     );
     replacements.insert("launcher_name".to_string(), "Prism Launcher".to_string());
-    replacements.insert("launcher_version".to_string(), "1.0.2".to_string());
+    replacements.insert("launcher_version".to_string(), "1.0.3".to_string());
 
-    let collected_game_args = game_arguments(&version, parent_version.as_ref(), &replacements);
-    let game_args = prism_game_arguments(&collected_game_args, &replacements);
+    let game_args = game_arguments(&version, parent_version.as_ref(), &replacements);
     let mut jvm_args = Vec::new();
     jvm_args.push(format!("-Xmx{}M", instance.ram_mb));
-    jvm_args.extend(split_args(&instance.jvm_args));
+    jvm_args.extend(parse_jvm_arguments(&instance.jvm_args)?);
     if let Some(logging_argument) = logging_client
         .and_then(|logging| logging.argument.as_ref())
         .and_then(|argument| {
@@ -709,10 +714,10 @@ pub fn start_minecraft_process(
         jvm_args.push(logging_argument);
     }
     let version_jvm_args = jvm_arguments(&version, parent_version.as_ref(), &replacements);
-    if version_jvm_args.is_empty() {
+    let has_classpath = contains_classpath_argument(&version_jvm_args);
+    jvm_args.extend(version_jvm_args);
+    if !has_classpath {
         jvm_args.extend(default_jvm_arguments(&natives_dir, &classpath));
-    } else {
-        jvm_args.extend(version_jvm_args);
     }
 
     let mut args = Vec::new();
@@ -756,7 +761,18 @@ pub fn start_minecraft_process(
 }
 
 #[tauri::command]
-pub fn stop_minecraft_process(process_id: u32) -> Result<(), String> {
+pub async fn stop_minecraft_process(process_id: u32) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || stop_minecraft_process_blocking(process_id))
+        .await
+        .map_err(|error| format!("Minecraft stop worker failed: {error}"))?
+}
+
+fn stop_minecraft_process_blocking(process_id: u32) -> Result<(), String> {
+    // A stale/reused PID must never make the launcher kill an unrelated process.
+    if !is_minecraft_process_running_blocking(process_id)? {
+        return Ok(());
+    }
+
     #[cfg(target_os = "windows")]
     let status = {
         let mut command = Command::new("taskkill");
@@ -781,17 +797,43 @@ pub fn stop_minecraft_process(process_id: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn is_minecraft_process_running(process_id: u32) -> Result<bool, String> {
+pub async fn is_minecraft_process_running(process_id: u32) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || is_minecraft_process_running_blocking(process_id))
+        .await
+        .map_err(|error| format!("Minecraft process inspection worker failed: {error}"))?
+}
+
+fn is_minecraft_process_running_blocking(process_id: u32) -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
         let mut command = Command::new("tasklist");
-        command.args(["/FI", &format!("PID eq {process_id}"), "/NH"]);
+        command.args(["/FI", &format!("PID eq {process_id}"), "/FO", "CSV", "/NH"]);
         command.creation_flags(CREATE_NO_WINDOW);
         let output = command
             .output()
             .map_err(|error| format!("Cannot inspect process {process_id}: {error}"))?;
-        let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
-        Ok(stdout.contains(&process_id.to_string()) && !stdout.contains("no tasks"))
+        if !output.status.success() {
+            return Err(format!(
+                "Cannot inspect process {process_id}: tasklist failed."
+            ));
+        }
+
+        let expected_pid = process_id.to_string();
+        Ok(String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+            let columns = line
+                .trim()
+                .trim_matches('"')
+                .split("\",\"")
+                .collect::<Vec<_>>();
+            if columns.len() < 2 || columns[1] != expected_pid {
+                return false;
+            }
+
+            matches!(
+                columns[0].to_ascii_lowercase().as_str(),
+                "java.exe" | "javaw.exe"
+            )
+        }))
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1075,8 +1117,7 @@ fn read_loader_profile_from_installer(
 ) -> Result<LoaderInstallerProfile, String> {
     if let Ok(raw) = read_zip_entry_to_string(archive, "version.json") {
         return serde_json::from_str::<VersionJson>(&raw)
-            .map(|mut version| {
-                upgrade_lwjgl3_libraries(&mut version);
+            .map(|version| {
                 LoaderInstallerProfile {
                     version,
                     embedded_artifact: None,
@@ -1102,7 +1143,6 @@ fn read_loader_profile_from_installer(
         apply_forge_install_artifact_classifier(&mut version_info, &install);
         embedded_artifact = embedded_installer_artifact(&install);
     }
-    upgrade_lwjgl3_libraries(&mut version_info);
 
     Ok(LoaderInstallerProfile {
         version: version_info,
@@ -1327,7 +1367,7 @@ fn find_version_json(
                 .join("versions")
                 .join(version_id)
                 .join(format!("{version_id}.json"));
-            if path.exists() {
+            if path.exists() && loader_profile_matches_instance(version_id, &path, instance) {
                 return Some((version_id.clone(), path));
             }
         }
@@ -1357,6 +1397,10 @@ fn find_version_json(
         }
     }
 
+    if instance.loader_type != "vanilla" {
+        return None;
+    }
+
     for root in [game_dir, storage_dir] {
         let path = root
             .join("versions")
@@ -1371,18 +1415,18 @@ fn find_version_json(
 }
 
 fn loader_profile_matches_instance(version_id: &str, path: &Path, instance: &Instance) -> bool {
-    let minecraft_version = instance.minecraft_version.to_lowercase();
-    let version_id = version_id.to_lowercase();
-
-    if version_id.contains(&minecraft_version) {
-        return true;
+    let Ok(version) = read_version_json(path) else {
+        return false;
+    };
+    if instance.loader_type == "fabric" {
+        let loader = format!("net.fabricmc:fabric-loader:{}", instance.loader_version);
+        return version.inherits_from.as_deref() == Some(instance.minecraft_version.as_str())
+            && version.main_class == "net.fabricmc.loader.impl.launch.knot.KnotClient"
+            && version.libraries.iter().any(|library| library.name.as_deref() == Some(loader.as_str()));
     }
-
-    read_version_json(path)
-        .ok()
-        .and_then(|version| version.inherits_from)
-        .map(|inherits_from| inherits_from.eq_ignore_ascii_case(&instance.minecraft_version))
-        .unwrap_or(false)
+    version.inherits_from.as_ref()
+        .map(|parent| parent.eq_ignore_ascii_case(&instance.minecraft_version))
+        .unwrap_or_else(|| version_id.to_lowercase().contains(&instance.minecraft_version.to_lowercase()))
 }
 
 fn version_candidates(instance: &Instance) -> Vec<String> {
@@ -1445,52 +1489,9 @@ fn version_candidates(instance: &Instance) -> Vec<String> {
 fn read_version_json(path: &Path) -> Result<VersionJson, String> {
     let version_raw = fs::read_to_string(path)
         .map_err(|error| format!("Cannot read version JSON {}: {error}", path.display()))?;
-    let mut version: VersionJson = serde_json::from_str(&version_raw)
+    let version: VersionJson = serde_json::from_str(&version_raw)
         .map_err(|error| format!("Cannot parse version JSON {}: {error}", path.display()))?;
-    upgrade_lwjgl3_libraries(&mut version);
     Ok(version)
-}
-
-fn upgrade_lwjgl3_libraries(version: &mut VersionJson) {
-    for library in &mut version.libraries {
-        let Some(name) = library.name.as_deref() else {
-            continue;
-        };
-        let mut parts = name.split(':').map(ToString::to_string).collect::<Vec<_>>();
-        if parts.len() < 3
-            || parts[0] != "org.lwjgl"
-            || !parts[1].starts_with("lwjgl")
-            || !parts[2].starts_with("3.")
-        {
-            continue;
-        }
-
-        parts[2] = TARGET_LWJGL3_VERSION.to_string();
-        let upgraded_name = parts.join(":");
-        library.name = Some(upgraded_name.clone());
-        library.url = Some(MAVEN_CENTRAL_URL.to_string());
-
-        if let Some(downloads) = &mut library.downloads {
-            if let Some(artifact) = &mut downloads.artifact {
-                if let Some(path) = maven_path_from_name(&upgraded_name) {
-                    artifact.url = Some(format!("{MAVEN_CENTRAL_URL}/{path}"));
-                    artifact.path = path;
-                }
-            }
-            if let Some(classifiers) = &mut downloads.classifiers {
-                for (classifier, artifact) in classifiers {
-                    let classifier_name = format!(
-                        "{}:{}:{}:{}",
-                        parts[0], parts[1], TARGET_LWJGL3_VERSION, classifier
-                    );
-                    if let Some(path) = maven_path_from_name(&classifier_name) {
-                        artifact.url = Some(format!("{MAVEN_CENTRAL_URL}/{path}"));
-                        artifact.path = path;
-                    }
-                }
-            }
-        }
-    }
 }
 
 fn find_parent_version(
@@ -2181,36 +2182,8 @@ fn contains_core_game_arguments(args: &[String]) -> bool {
 
 fn contains_classpath_argument(args: &[String]) -> bool {
     args.iter()
-        .any(|arg| arg == "-cp" || arg == "-classpath" || arg == "--class-path")
-}
-
-fn prism_game_arguments(
-    collected_args: &[String],
-    replacements: &HashMap<String, String>,
-) -> Vec<String> {
-    let mut args = Vec::new();
-    let prism_base = [
-        ("--username", "auth_player_name"),
-        ("--version", "version_name"),
-        ("--gameDir", "game_directory"),
-        ("--assetsDir", "assets_root"),
-        ("--assetIndex", "assets_index_name"),
-        ("--uuid", "auth_uuid"),
-        ("--accessToken", "auth_access_token"),
-        ("--userProperties", "user_properties"),
-        ("--userType", "user_type"),
-        ("--versionType", "version_type"),
-    ];
-
-    for (argument, replacement_key) in prism_base {
-        if let Some(value) = replacements.get(replacement_key) {
-            args.push(argument.to_string());
-            args.push(value.clone());
-        }
-    }
-
-    args.extend(non_prism_extra_arguments(collected_args));
-    args
+        .any(|arg| arg == "-cp" || arg == "-classpath" || arg == "--class-path"
+            || arg.starts_with("--class-path="))
 }
 
 fn launch_debug_lines(
@@ -2230,6 +2203,9 @@ fn launch_debug_lines(
         format!("account.uuid.compact.length: {}", compact_uuid.len()),
         format!("instance.minecraftVersion: {}", instance.minecraft_version),
         format!("resolved.versionId: {}", version.id),
+        format!("resolved.mainClass: {}", version.main_class),
+        format!("resolved.javaPath: {}", instance.java_path),
+        "argumentOrder: JVM arguments -> main class -> game arguments".to_string(),
         format!(
             "accessToken: {}",
             if argument_has_value(game_args, "--accessToken") {
@@ -2249,47 +2225,6 @@ fn argument_has_value(args: &[String], argument: &str) -> bool {
         || args
             .iter()
             .any(|arg| arg.starts_with(&format!("{argument}=")) && arg.len() > argument.len() + 1)
-}
-
-fn non_prism_extra_arguments(collected_args: &[String]) -> Vec<String> {
-    let mut extras = Vec::new();
-    let mut skip_next = false;
-
-    for arg in collected_args {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-
-        if is_prism_base_argument(arg) {
-            skip_next = !arg.contains('=');
-            continue;
-        }
-
-        extras.push(arg.clone());
-    }
-
-    extras
-}
-
-fn is_prism_base_argument(arg: &str) -> bool {
-    [
-        "--username",
-        "--version",
-        "--gameDir",
-        "--assetsDir",
-        "--assetIndex",
-        "--uuid",
-        "--accessToken",
-        "--clientId",
-        "--xuid",
-        "--userProperties",
-        "--userPropertyMap",
-        "--userType",
-        "--versionType",
-    ]
-    .iter()
-    .any(|base| arg == *base || arg.starts_with(&format!("{base}=")))
 }
 
 fn write_launch_preamble(
@@ -2433,6 +2368,130 @@ fn split_args(value: &str) -> Vec<String> {
     value.split_whitespace().map(ToString::to_string).collect()
 }
 
+// Only free-form instance settings need tokenizing. Metadata array entries
+// (including FabricMcEmu) already are complete arguments and must stay intact.
+fn parse_jvm_arguments(value: &str) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut started = false;
+    for character in value.chars() {
+        match character {
+            '\'' | '"' if quote == Some(character) => quote = None,
+            '\'' | '"' if quote.is_none() => {
+                quote = Some(character);
+                started = true;
+            }
+            c if c.is_whitespace() && quote.is_none() => {
+                if started {
+                    args.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            c => {
+                current.push(c);
+                started = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return Err("Unclosed quote in instance JVM arguments.".to_string());
+    }
+    if started {
+        args.push(current);
+    }
+    Ok(args)
+}
+
 fn is_quick_play_argument(value: &str) -> bool {
     value.contains("quickPlay") || value.starts_with("--quickPlay")
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+
+    fn profile(value: Value) -> VersionJson {
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn custom_jvm_arguments_preserve_quoted_windows_paths() {
+        assert_eq!(
+            parse_jvm_arguments(r#"-Xms1G -Dconfig="D:\3 Minecraft\config.json" '-Dlabel=hello world'"#).unwrap(),
+            ["-Xms1G", r"-Dconfig=D:\3 Minecraft\config.json", "-Dlabel=hello world"]
+        );
+        assert!(parse_jvm_arguments("-Dconfig=\"unfinished").is_err());
+    }
+
+    #[test]
+    fn fabric_metadata_is_not_split_or_used_as_main_class() {
+        let parent = profile(serde_json::json!({
+            "id": "26.2", "mainClass": "net.minecraft.client.main.Main",
+            "arguments": {"jvm": ["--enable-native-access=ALL-UNNAMED", "-cp", "${classpath}"]}
+        }));
+        let fabric = profile(serde_json::json!({
+            "id": "fabric-loader-0.19.3-26.2", "inheritsFrom": "26.2",
+            "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+            "arguments": {"jvm": ["-DFabricMcEmu= net.minecraft.client.main.Main "]}
+        }));
+        let replacements = HashMap::from([("classpath".into(), r"D:\Minecraft Files\client.jar".into())]);
+        assert_eq!(jvm_arguments(&fabric, Some(&parent), &replacements), [
+            "--enable-native-access=ALL-UNNAMED", "-cp", r"D:\Minecraft Files\client.jar",
+            "-DFabricMcEmu= net.minecraft.client.main.Main "
+        ]);
+        assert_eq!(fabric.main_class, "net.fabricmc.loader.impl.launch.knot.KnotClient");
+    }
+
+    #[test]
+    fn inherited_game_arguments_keep_account_and_loader_parameters() {
+        let parent = profile(serde_json::json!({
+            "id": "26.2", "mainClass": "Main",
+            "arguments": {"game": ["--username", "${auth_player_name}", "--clientId", "client", "--xuid", "xuid"]}
+        }));
+        let fabric = profile(serde_json::json!({
+            "id": "fabric", "mainClass": "KnotClient",
+            "arguments": {"game": ["--loader-option", "value"]}
+        }));
+        let replacements = HashMap::from([("auth_player_name".into(), "Player".into())]);
+        assert_eq!(game_arguments(&fabric, Some(&parent), &replacements), [
+            "--username", "Player", "--clientId", "client", "--xuid", "xuid", "--loader-option", "value"
+        ]);
+    }
+
+    #[test]
+    fn missing_fabric_profile_does_not_launch_vanilla() {
+        let root = env::temp_dir().join(format!("stellar-launch-test-{}", uuid::Uuid::new_v4()));
+        let version_dir = root.join("versions/26.2");
+        fs::create_dir_all(&version_dir).unwrap();
+        fs::write(version_dir.join("26.2.json"), r#"{"id":"26.2","mainClass":"Main"}"#).unwrap();
+        let metadata_path = root.join("fabric.json");
+        fs::write(&metadata_path, serde_json::json!({
+            "id": "fabric-loader-0.19.3-26.2", "inheritsFrom": "26.2",
+            "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+            "libraries": [{"name": "net.fabricmc:fabric-loader:0.19.3"},
+                {"name": "org.lwjgl:lwjgl:3.4.1:unsafe"}]
+        }).to_string()).unwrap();
+        let mut instance = Instance {
+            id: "test".into(), name: "Test".into(), minecraft_version: "26.2".into(),
+            loader_type: "fabric".into(), loader_version: "0.19.3".into(),
+            game_directory: String::new(), java_path: String::new(), ram_mb: 2048, jvm_args: String::new(),
+        };
+        assert!(find_version_json(&instance, &root, &root).is_none());
+        assert!(loader_profile_matches_instance("fabric-loader-0.19.3-26.2", &metadata_path, &instance));
+        assert_eq!(read_version_json(&metadata_path).unwrap().libraries[1].name.as_deref(), Some("org.lwjgl:lwjgl:3.4.1:unsafe"));
+        instance.loader_version = "0.19.5".into();
+        assert!(!loader_profile_matches_instance("fabric-loader-0.19.3-26.2", &metadata_path, &instance));
+        instance.loader_version = "0.19.3".into();
+        instance.minecraft_version = "26.2.1".into();
+        assert!(!loader_profile_matches_instance("fabric-loader-0.19.3-26.2", &metadata_path, &instance));
+        instance.minecraft_version = "26.2".into();
+        instance.loader_type = "vanilla".into();
+        assert!(find_version_json(&instance, &root, &root).is_some());
+        fs::remove_file(version_dir.join("26.2.json")).unwrap();
+        fs::remove_file(metadata_path).unwrap();
+        fs::remove_dir(version_dir).unwrap();
+        fs::remove_dir(root.join("versions")).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
 }

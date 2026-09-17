@@ -6,6 +6,7 @@ import { LauncherSettings } from "../models/settings";
 import { getLoaderVersions, loaderLabels, LoaderVersion } from "../services/loaderServices";
 import { getMinecraftVersions, MinecraftVersion } from "../services/minecraftVersionService";
 import { validateInstanceInput } from "../services/instanceService";
+import { DEFAULT_INSTANCE_ICON } from "../services/instanceIconService";
 import Button from "./ui/Button";
 import Card from "./ui/Card";
 import CustomSelect from "./ui/CustomSelect";
@@ -21,7 +22,6 @@ interface CreateInstanceModalProps {
 }
 
 const loaderTypes: LoaderType[] = ["vanilla", "fabric", "forge", "neoforge", "quilt"];
-const defaultInstanceIcon = "#64748b";
 
 function defaultProfileDirectory(instanceName: string): string {
   const profileName = instanceName.trim().replace(/[<>:"/\\|?*]/g, "-") || "<Instance Name>";
@@ -45,7 +45,7 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
     javaPath: "",
     ramMb: settings.defaultRamMb,
     jvmArgs: settings.jvmArgs,
-    icon: defaultInstanceIcon,
+    icon: DEFAULT_INSTANCE_ICON,
     notes: ""
   });
 
@@ -76,7 +76,7 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
             javaPath: "",
             ramMb: settings.defaultRamMb,
             jvmArgs: settings.jvmArgs,
-            icon: defaultInstanceIcon,
+            icon: DEFAULT_INSTANCE_ICON,
             notes: ""
           }
     );

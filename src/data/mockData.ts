@@ -46,7 +46,7 @@ export const defaultLauncherSettings: LauncherSettings = {
 };
 
 export const defaultLauncherStatus: LauncherStatusSummary = {
-  version: "1.0.2",
+  version: "1.0.3",
   javaDetected: true,
   storageReady: true,
   lastSync: "Local mock mode"

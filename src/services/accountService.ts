@@ -168,7 +168,7 @@ export function sortAccounts(accounts: Account[]): Account[] {
 function normalizeAccountOrder(accounts: Account[]): Account[] {
   let favoriteOrder = 0;
   let regularOrder = 0;
-  return sortAccounts(accounts).map((account) => {
+  return accounts.map((account) => {
     if (account.isFavorite) return { ...account, order: favoriteOrder++ };
     return { ...account, order: regularOrder++ };
   });

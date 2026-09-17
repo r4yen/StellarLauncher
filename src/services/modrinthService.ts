@@ -49,7 +49,7 @@ function loaderFacet(loaderType: LoaderType): string {
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: {
-      "User-Agent": "StellarLauncher/1.0.2"
+      "User-Agent": "StellarLauncher/1.0.3"
     }
   });
 

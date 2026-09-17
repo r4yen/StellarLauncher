@@ -484,7 +484,8 @@ button {
   gap: 12px;
   width: min(390px, calc(100vw - 36px));
   max-height: min(560px, calc(100vh - 72px));
-  overflow: visible;
+  overflow-x: hidden;
+  overflow-y: visible;
   padding: 8px;
   border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--line));
   border-radius: 18px;
@@ -629,10 +630,12 @@ button {
 }
 
 .download-task-list {
+  min-width: 0;
   display: grid;
   gap: 10px;
   max-height: 470px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .download-empty {
@@ -642,6 +645,7 @@ button {
 }
 
 .download-task {
+  min-width: 0;
   display: grid;
   gap: 9px;
   padding: 12px;
@@ -649,6 +653,13 @@ button {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.045);
+}
+
+.download-task-top,
+.download-task-top > *,
+.download-task-meta,
+.download-task-meta > * {
+  min-width: 0;
 }
 
 .download-task-top strong,
@@ -660,7 +671,7 @@ button {
 }
 
 .download-task-top strong {
-  max-width: 250px;
+  max-width: 100%;
   color: var(--text);
   font-size: 13px;
 }
@@ -718,6 +729,7 @@ button {
 
 .download-task-meta {
   flex-wrap: wrap;
+  overflow-wrap: anywhere;
 }
 
 .page-stack {
