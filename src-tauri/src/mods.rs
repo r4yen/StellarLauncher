@@ -135,6 +135,11 @@ pub async fn install_modrinth_mod(
     replace_path: Option<String>,
     operation_id: Option<String>,
 ) -> Result<ModFile, String> {
+    let operation_id = operation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    crate::operations::run(operation_id.clone(), install_modrinth_mod_inner(app, game_directory, download_url, file_name, replace_path, Some(operation_id))).await
+}
+
+async fn install_modrinth_mod_inner(app: AppHandle, game_directory: String, download_url: String, file_name: String, replace_path: Option<String>, operation_id: Option<String>) -> Result<ModFile, String> {
     let mods_dir = PathBuf::from(expand_path(&game_directory)).join("mods");
     fs::create_dir_all(&mods_dir).map_err(|error| {
         format!(
@@ -162,7 +167,7 @@ pub async fn install_modrinth_mod(
         .map_err(|error| format!("Modrinth mod download failed: {error}"))?;
     let total_bytes = response.content_length();
     let mut downloaded_bytes = 0_u64;
-    let mut output = fs::File::create(&target)
+    let mut output = tempfile::NamedTempFile::new_in(&mods_dir)
         .map_err(|error| format!("Cannot create Modrinth mod {}: {error}", target.display()))?;
     let mut stream = response.bytes_stream();
 
@@ -183,6 +188,8 @@ pub async fn install_modrinth_mod(
         );
     }
 
+    output.flush().map_err(|e| e.to_string())?;
+    output.persist_noclobber(&target).map_err(|e| e.to_string())?;
     if let Some(old_path) = replace_path {
         let old = PathBuf::from(old_path);
         if old.exists() && old != target {
@@ -202,7 +209,7 @@ pub async fn install_modrinth_mod(
     read_mod_file(&target)
 }
 
-fn emit_mod_progress(
+pub(super) fn emit_mod_progress(
     app: &AppHandle,
     operation_id: &str,
     status: &str,

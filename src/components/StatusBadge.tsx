@@ -1,5 +1,6 @@
 import { CheckCircle2, CircleDot, Loader2, Play, TriangleAlert } from "lucide-react";
 import { LaunchState } from "../models/instance";
+import { useUiText } from "../uiLanguage";
 
 interface StatusBadgeProps {
   state: LaunchState | "online" | "offline" | "ready" | "active" | "expired" | "refreshRequired" | "incomplete" | "needsAccount";
@@ -24,12 +25,13 @@ const iconMap = {
 };
 
 export default function StatusBadge({ state, label }: StatusBadgeProps) {
+  const ui = useUiText();
   const Icon = iconMap[state];
 
   return (
     <span className={`status-badge status-${state}`}>
       <Icon size={14} className={state === "preparing" ? "spin" : ""} />
-      {label ?? state}
+      {ui(label ?? state)}
     </span>
   );
 }

@@ -1,3 +1,5 @@
+import LocalizedError from "./LocalizedError";
+import { useUiText, useUiLanguage } from "../uiLanguage";
 import { ArrowDown, ArrowUp, Image, Star, Trash2, UserCheck } from "lucide-react";
 import { Account } from "../models/account";
 import { minecraftHeadUrl } from "../services/avatarService";
@@ -16,8 +18,8 @@ interface AccountCardProps {
   canMoveDown?: boolean;
 }
 
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("de-DE", {
+function formatDate(value: string, language: string): string {
+  return new Intl.DateTimeFormat(language === "de" ? "de-DE" : "en-GB", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric"
@@ -40,6 +42,8 @@ export default function AccountCard({
   canMoveUp = false,
   canMoveDown = false
 }: AccountCardProps) {
+  const ui = useUiText();
+  const language = useUiLanguage();
   const avatarUrl = minecraftHeadUrl(account);
   const className = [
     "account-card",
@@ -52,15 +56,15 @@ export default function AccountCard({
   return (
     <Card className={className}>
       <div className="order-tools card-side-order-tools">
-        <button className="icon-button" disabled={!canMoveUp} onClick={() => onMove?.(account.id, -1)} type="button" aria-label="Move account up">
+        <button className="icon-button" disabled={!canMoveUp} onClick={() => onMove?.(account.id, -1)} type="button" aria-label={ui("Move account up")}>
           <ArrowUp size={16} />
         </button>
-        <button className="icon-button" disabled={!canMoveDown} onClick={() => onMove?.(account.id, 1)} type="button" aria-label="Move account down">
+        <button className="icon-button" disabled={!canMoveDown} onClick={() => onMove?.(account.id, 1)} type="button" aria-label={ui("Move account down")}>
           <ArrowDown size={16} />
         </button>
       </div>
       {avatarUrl ? (
-        <img className="account-avatar account-avatar-image" src={avatarUrl} alt={`${account.username} skin head`} />
+        <img className="account-avatar account-avatar-image" src={avatarUrl} alt={ui("{name} skin head", {name: account.username})} />
       ) : (
         <div className="account-avatar" style={{ background: account.avatarColor }}>
           {account.username.slice(0, 1)}
@@ -78,20 +82,20 @@ export default function AccountCard({
               className={account.isFavorite ? "favorite-star favorite-star-active" : "favorite-star"}
               onClick={() => onToggleFavorite?.(account.id)}
               type="button"
-              aria-label={account.isFavorite ? "Unfavorite account" : "Favorite account"}
+              aria-label={account.isFavorite ? ui("Unfavorite account") : ui("Favorite account")}
             >
               <Star size={19} fill="currentColor" />
             </button>
           </div>
         </div>
         <div className="account-meta">
-          <span>{account.tokenExpiresAt ? `Token expires ${formatDate(account.tokenExpiresAt)}` : "No token expiry"}</span>
+          <span>{account.tokenExpiresAt ? ui("Token expires {date}", {date: formatDate(account.tokenExpiresAt, language)}) : ui("No token expiry")}</span>
         </div>
-        {account.errorMessage ? <p className="error-text">{account.errorMessage}</p> : null}
+        {account.errorMessage ? <p className="error-text"><LocalizedError message={account.errorMessage} /></p> : null}
         <div className="card-bottom-actions">
           <div className="card-action-left">
             <Button icon={<UserCheck size={16} />} variant={account.isActive ? "secondary" : "primary"} onClick={() => onSelectAccount(account.id)}>
-              {account.isActive ? "Selected" : "Select"}
+              {account.isActive ? ui("Selected") : ui("Select")}
             </Button>
             <Button icon={<Image size={16} />} variant="secondary" onClick={() => onOpenSkinLibrary?.(account.id)}>
               Skin
@@ -99,8 +103,7 @@ export default function AccountCard({
           </div>
           <div className="card-action-right">
             <Button icon={<Trash2 size={16} />} variant="danger" onClick={() => onRemoveAccount?.(account.id)}>
-              Remove
-            </Button>
+              {ui("Remove")}</Button>
           </div>
         </div>
       </div>

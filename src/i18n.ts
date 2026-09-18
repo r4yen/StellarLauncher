@@ -35,7 +35,7 @@ const translations = {
     launch: "Starten",
     stop: "Stoppen",
     newInstance: "Neue Instanz",
-    microsoftLogin: "Microsoft Login",
+    microsoftLogin: "Microsoft-Anmeldung",
     openMicrosoft: "Microsoft öffnen",
     addOfflinePlayer: "Offline-Spieler hinzufügen",
     delete: "Löschen",

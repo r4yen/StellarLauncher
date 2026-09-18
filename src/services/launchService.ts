@@ -64,7 +64,7 @@ export async function validateLaunch(instance: Instance, account: Account | unde
   if (!instance.minecraftVersion || !instance.gameDirectory || !effectiveJavaPath) {
     return {
       state: "error",
-      message: "Instance configuration is incomplete. Set the matching Java 8, 17, 21, or 25 path in Settings, or set a Java override on the instance.",
+      message: "Instance configuration is incomplete. Check the Minecraft version and game directory, then retry automatic Java setup by launching again.",
       instanceId: instance.id,
       updatedAt: new Date().toISOString()
     };

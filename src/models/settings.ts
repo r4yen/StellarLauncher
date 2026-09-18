@@ -14,6 +14,10 @@ export interface LauncherSettings {
   minecraftStorageDirectory: string;
   language: "en" | "de";
   discordRichPresenceEnabled: boolean;
+  autoUpdateEnabled: boolean;
+  initialSetupCompleted: boolean;
+  openDownloadsAutomatically: boolean;
+  autoBackupBeforeChanges: boolean;
 }
 
 export interface LauncherStatusSummary {

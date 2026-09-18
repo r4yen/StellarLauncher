@@ -1,3 +1,5 @@
+import LocalizedError from "./LocalizedError";
+import { useUiText } from "../uiLanguage";
 import { FormEvent, useState } from "react";
 import { ArrowDown, ArrowUp, Check, Pencil, Plus, Star, Trash2, UserCheck, X } from "lucide-react";
 import { SkinLibraryItem } from "../models/skin";
@@ -17,6 +19,7 @@ interface SkinLibraryProps {
 }
 
 export default function SkinLibrary({ selectedSkinId, skins, onAddSkin, onMoveSkin, onRemoveSkin, onRenameSkin, onSelectSkin, onToggleFavorite }: SkinLibraryProps) {
+  const ui = useUiText();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [editingSkinId, setEditingSkinId] = useState<string | undefined>();
@@ -59,13 +62,12 @@ export default function SkinLibrary({ selectedSkinId, skins, onAddSkin, onMoveSk
       <div className="skin-library-header">
         <div>
           <span>Skin</span>
-          <h2>Skin Library</h2>
-          <p>Loaded accounts are added automatically. You can also add a player name and reorder skins by dragging them.</p>
+          <h2>{ui("Skin Library")}</h2>
+          <p>{ui("Loaded accounts are added automatically. You can also add a player name and reorder skins by dragging them.")}</p>
         </div>
         <form className="skin-add-form" onSubmit={submit}>
           <label>
-            Player name
-            <input
+            {ui("Player name")}<input
               maxLength={16}
               placeholder="Steve"
               value={name}
@@ -76,12 +78,11 @@ export default function SkinLibrary({ selectedSkinId, skins, onAddSkin, onMoveSk
             />
           </label>
           <Button icon={<Plus size={16} />} type="submit">
-            Add Skin
-          </Button>
+            {ui("Add Skin")}</Button>
         </form>
       </div>
 
-      {error ? <p className="error-text">{error}</p> : null}
+      {error ? <p className="error-text"><LocalizedError message={error} /></p> : null}
 
       {skins.length > 0 ? (
         <div className="skin-library-grid">
@@ -93,20 +94,20 @@ export default function SkinLibrary({ selectedSkinId, skins, onAddSkin, onMoveSk
               <button
                 className={skin.isFavorite ? "favorite-star favorite-star-active skin-favorite-button" : "favorite-star skin-favorite-button"}
                 type="button"
-                aria-label={skin.isFavorite ? `Unfavorite ${skin.name}` : `Favorite ${skin.name}`}
+                aria-label={skin.isFavorite ? ui("Unfavorite {name}", {name: skin.name}) : ui("Favorite {name}", {name: skin.name})}
                 onClick={() => onToggleFavorite(skin.id)}
               >
                 <Star size={19} fill="currentColor" />
               </button>
               <div className="order-tools skin-order-tools">
-                <button className="icon-button skin-small-action" disabled={!canMoveSkin(skins, skin.id, -1)} onClick={() => onMoveSkin(skin.id, -1)} type="button" aria-label={`Move ${skin.name} up`}>
+                <button className="icon-button skin-small-action" disabled={!canMoveSkin(skins, skin.id, -1)} onClick={() => onMoveSkin(skin.id, -1)} type="button" aria-label={ui("Move {name} up", {name: skin.name})}>
                   <ArrowUp size={15} />
                 </button>
-                <button className="icon-button skin-small-action" disabled={!canMoveSkin(skins, skin.id, 1)} onClick={() => onMoveSkin(skin.id, 1)} type="button" aria-label={`Move ${skin.name} down`}>
+                <button className="icon-button skin-small-action" disabled={!canMoveSkin(skins, skin.id, 1)} onClick={() => onMoveSkin(skin.id, 1)} type="button" aria-label={ui("Move {name} down", {name: skin.name})}>
                   <ArrowDown size={15} />
                 </button>
               </div>
-              <img className="skin-preview" src={skin.fullImageUrl ?? skin.imageUrl} alt={`${skin.name} skin`} />
+              <img className="skin-preview" src={skin.fullImageUrl ?? skin.imageUrl} alt={ui("{name} skin", {name: skin.name})} />
               <div className="skin-info">
                 {editingSkinId === skin.id ? (
                   <div className="skin-rename-row">
@@ -122,13 +123,13 @@ export default function SkinLibrary({ selectedSkinId, skins, onAddSkin, onMoveSk
                         }
                       }}
                     />
-                    <button className="icon-button skin-small-action" type="button" aria-label="Save skin name" onClick={commitRename}>
+                    <button className="icon-button skin-small-action" type="button" aria-label={ui("Save skin name")} onClick={commitRename}>
                       <Check size={15} />
                     </button>
                     <button
                       className="icon-button skin-small-action"
                       type="button"
-                      aria-label="Cancel rename"
+                      aria-label={ui("Cancel rename")}
                       onClick={() => {
                         setEditingSkinId(undefined);
                         setEditingName("");
@@ -149,16 +150,15 @@ export default function SkinLibrary({ selectedSkinId, skins, onAddSkin, onMoveSk
                       type="button"
                       onClick={() => onSelectSkin(skin.id)}
                     >
-                      {skin.id === selectedSkinId ? "Selected" : "Select"}
+                      {skin.id === selectedSkinId ? ui("Selected") : ui("Select")}
                     </Button>
                   ) : null}
                   <Button className="skin-rename-button" icon={<Pencil size={15} />} variant="secondary" type="button" onClick={() => startRename(skin)}>
-                    Rename
-                  </Button>
+                    {ui("Rename")}</Button>
                 </div>
               </div>
               <div className="skin-actions">
-                <button className="icon-button icon-button-danger skin-small-action" type="button" aria-label={`Delete ${skin.name}`} onClick={() => onRemoveSkin(skin.id)}>
+                <button className="icon-button icon-button-danger skin-small-action" type="button" aria-label={ui("Delete {name}", {name: skin.name})} onClick={() => onRemoveSkin(skin.id)}>
                   <Trash2 size={15} />
                 </button>
               </div>
@@ -167,8 +167,8 @@ export default function SkinLibrary({ selectedSkinId, skins, onAddSkin, onMoveSk
         </div>
       ) : (
         <div className="skin-library-empty">
-          <h3>No skins saved</h3>
-          <p>Sign in, add an offline player, or enter a Minecraft name above.</p>
+          <h3>{ui("No skins saved")}</h3>
+          <p>{ui("Sign in, add an offline player, or enter a Minecraft name above.")}</p>
         </div>
       )}
     </Card>

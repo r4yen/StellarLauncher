@@ -1,3 +1,5 @@
+import LocalizedError from "./LocalizedError";
+import { useUiText } from "../uiLanguage";
 import { FileText, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -15,6 +17,7 @@ interface RunningInstanceCardProps {
 }
 
 export default function RunningInstanceCard({ runningInstance, onStop }: RunningInstanceCardProps) {
+  const ui = useUiText();
   const [logOpen, setLogOpen] = useState(false);
   const [logLines, setLogLines] = useState<string[]>([]);
   const [logError, setLogError] = useState<string | undefined>();
@@ -67,7 +70,7 @@ export default function RunningInstanceCard({ runningInstance, onStop }: Running
       <div className="card-heading running-heading">
         <div className="running-title-cluster">
           {iconSrc ? (
-            <img className="instance-image" src={iconSrc} alt={`${runningInstance.instance.name} icon`} />
+            <img className="instance-image" src={iconSrc} alt={ui("{name} icon", {name: runningInstance.instance.name})} />
           ) : (
             <div
               className="instance-image instance-image-color"
@@ -78,7 +81,7 @@ export default function RunningInstanceCard({ runningInstance, onStop }: Running
             <h3>{runningInstance.instance.name}</h3>
             <p className="running-account-line">
               {accountAvatarUrl ? (
-                <img src={accountAvatarUrl} alt={`${runningInstance.account.username} skin head`} />
+                <img src={accountAvatarUrl} alt={ui("{name} skin head", {name: runningInstance.account.username})} />
               ) : (
                 <span className="running-account-fallback" style={{ background: runningInstance.account.avatarColor }}>
                   {runningInstance.account.username.slice(0, 1)}
@@ -88,16 +91,16 @@ export default function RunningInstanceCard({ runningInstance, onStop }: Running
             </p>
           </div>
         </div>
-        <StatusBadge state={runningInstance.state} label={runningInstance.message} />
+        <StatusBadge state={runningInstance.state} />
       </div>
       <div className="running-meta">
         <span>Version <strong>{runningInstance.instance.minecraftVersion}</strong></span>
-        <span>RAM <strong>{Math.round(runningInstance.instance.ramMb / 1024)} GB</strong></span>
-        <span>Process <strong>{runningInstance.processId ? `PID ${runningInstance.processId}` : "Pending"}</strong></span>
+        <span>{ui("RAM")}<strong>{Math.round(runningInstance.instance.ramMb / 1024)} GB</strong></span>
+        <span>{ui("Process")}<strong>{runningInstance.processId ? `PID ${runningInstance.processId}` : ui("Pending")}</strong></span>
       </div>
       <div className="card-actions">
         <Button icon={<Square size={15} />} variant="danger" onClick={() => onStop(runningInstance.id)}>
-          {runningInstance.state === "error" ? "Remove from active" : "Stop"}
+          {runningInstance.state === "error" ? ui("Remove from active") : ui("Stop")}
         </Button>
         <Button
           icon={<FileText size={15} />}
@@ -108,19 +111,18 @@ export default function RunningInstanceCard({ runningInstance, onStop }: Running
             setLogOpen(true);
           }}
         >
-          Show log
-        </Button>
+          {ui("Show log")}</Button>
       </div>
       {logOpen
         ? createPortal(
-        <div className="modal-backdrop modal-backdrop-subwindow" role="dialog" aria-modal="true" aria-label={`${runningInstance.instance.name} log`}>
+        <div className="modal-backdrop modal-backdrop-subwindow" role="dialog" aria-modal="true" aria-label={ui("{name} log", {name: runningInstance.instance.name})}>
           <Card className="log-modal" tone="bright">
             <div className="modal-header">
               <div>
-                <span>Live output</span>
+                <span>{ui("Live output")}</span>
                 <h2>{runningInstance.instance.name}</h2>
               </div>
-              <button className="icon-button" onClick={() => setLogOpen(false)} type="button" aria-label="Close log">
+              <button className="icon-button" onClick={() => setLogOpen(false)} type="button" aria-label={ui("Close log")}>
                 <X size={18} />
               </button>
             </div>
@@ -132,9 +134,9 @@ export default function RunningInstanceCard({ runningInstance, onStop }: Running
                 shouldStickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
               }}
             >
-              {logError ? <code>{logError}</code> : null}
+              {logError ? <code><LocalizedError message={logError} /></code> : null}
               {!logError && logLines.length > 0 ? logLines.map((line, index) => <code key={`${index}-${line}`}>{line}</code>) : null}
-              {!logError && logLines.length === 0 ? <code>Waiting for log output...</code> : null}
+              {!logError && logLines.length === 0 ? <code>{ui("Waiting for log output...")}</code> : null}
             </div>
           </Card>
         </div>,

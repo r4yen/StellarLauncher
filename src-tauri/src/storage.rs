@@ -1,15 +1,10 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-    collections::HashSet,
     fs,
-    io::{Read, Write},
     path::{Path, PathBuf},
 };
 use tauri::{AppHandle, Manager};
-use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-const LOCAL_FILE_ICON_PREFIX: &str = "local-file:";
-const ARCHIVE_ICON_PREFIX: &str = "stellar-archive:";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,38 +72,6 @@ pub struct Instance {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StellarInstanceFile {
-    pub format: String,
-    pub version: u32,
-    #[serde(default)]
-    pub included_folders: Vec<String>,
-    #[serde(default)]
-    pub mod_downloads: Vec<StellarInstanceModDownload>,
-    pub instance: Instance,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StellarInstanceModDownload {
-    pub file_name: String,
-    pub archive_file_name: Option<String>,
-    pub download_url: String,
-    pub enabled: bool,
-    pub sha1: Option<String>,
-    pub project_id: Option<String>,
-    pub version_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StellarInstanceImportResult {
-    pub instance: Instance,
-    #[serde(default)]
-    pub mod_downloads: Vec<StellarInstanceModDownload>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct LauncherSettings {
     #[serde(default = "default_java_8_path")]
     pub java_8_path: String,
@@ -130,6 +93,15 @@ pub struct LauncherSettings {
     pub language: String,
     #[serde(default = "default_discord_rich_presence_enabled")]
     pub discord_rich_presence_enabled: bool,
+    #[serde(default = "default_auto_update_enabled")]
+    pub auto_update_enabled: bool,
+    // Existing installations predate the guide; only fresh installations start it.
+    #[serde(default = "default_auto_update_enabled")]
+    pub initial_setup_completed: bool,
+    #[serde(default = "default_auto_update_enabled")]
+    pub open_downloads_automatically: bool,
+    #[serde(default = "default_auto_update_enabled")]
+    pub auto_backup_before_changes: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,7 +110,7 @@ pub struct ThemeSettings {
     pub accent_color: String,
 }
 
-fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(super) fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -153,6 +125,10 @@ fn default_language() -> String {
 }
 
 fn default_discord_rich_presence_enabled() -> bool {
+    true
+}
+
+fn default_auto_update_enabled() -> bool {
     true
 }
 
@@ -234,14 +210,14 @@ fn read_json<T: DeserializeOwned>(app: &AppHandle, name: &str, fallback: T) -> R
     serde_json::from_str(&raw).map_err(|error| format!("Cannot parse {}: {error}", path.display()))
 }
 
-fn write_json<T: Serialize>(app: &AppHandle, name: &str, value: &T) -> Result<(), String> {
+pub(super) fn write_json<T: Serialize>(app: &AppHandle, name: &str, value: &T) -> Result<(), String> {
     let path = file_path(app, name)?;
     let raw = serde_json::to_string_pretty(value)
         .map_err(|error| format!("Cannot serialize {name}: {error}"))?;
     fs::write(&path, raw).map_err(|error| format!("Cannot write {}: {error}", path.display()))
 }
 
-fn expand_path(path: &str) -> Result<PathBuf, String> {
+pub(super) fn expand_path(path: &str) -> Result<PathBuf, String> {
     let mut expanded = path.to_string();
     if expanded.contains("%APPDATA%") {
         let appdata = std::env::var("APPDATA")
@@ -260,25 +236,6 @@ fn expand_path(path: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(expanded))
 }
 
-fn is_safe_folder_name(folder: &str) -> bool {
-    !folder.is_empty()
-        && !folder.contains("..")
-        && !folder.contains('/')
-        && !folder.contains('\\')
-        && folder.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.')
-        })
-}
-
-fn safe_archive_relative_path(path: &str) -> Option<PathBuf> {
-    let normalized = path.replace('\\', "/");
-    let relative = normalized.strip_prefix("overrides/")?;
-    if relative.is_empty() || relative.contains("../") || relative.starts_with('/') {
-        return None;
-    }
-    Some(PathBuf::from(relative))
-}
-
 fn supported_image_extension(path: &Path) -> Option<String> {
     let extension = path
         .extension()
@@ -287,185 +244,6 @@ fn supported_image_extension(path: &Path) -> Option<String> {
     ["png", "jpg", "jpeg", "webp", "gif"]
         .contains(&extension.as_str())
         .then_some(extension)
-}
-
-fn add_file_to_archive(
-    archive: &mut ZipWriter<fs::File>,
-    source_path: &Path,
-    archive_name: &str,
-    options: SimpleFileOptions,
-) -> Result<(), String> {
-    archive
-        .start_file(archive_name, options)
-        .map_err(|error| format!("Cannot add {archive_name} to archive: {error}"))?;
-    let mut file = fs::File::open(source_path)
-        .map_err(|error| format!("Cannot open {}: {error}", source_path.display()))?;
-    std::io::copy(&mut file, archive).map_err(|error| {
-        format!(
-            "Cannot write {} into archive: {error}",
-            source_path.display()
-        )
-    })?;
-    Ok(())
-}
-
-fn archive_instance_icon(icon: &str) -> Result<Option<(PathBuf, String)>, String> {
-    let Some(raw_path) = icon.strip_prefix(LOCAL_FILE_ICON_PREFIX) else {
-        return Ok(None);
-    };
-
-    let source_path = expand_path(raw_path)?;
-    if !source_path.exists() || !source_path.is_file() {
-        return Ok(None);
-    }
-
-    let Some(extension) = supported_image_extension(&source_path) else {
-        return Ok(None);
-    };
-
-    Ok(Some((
-        source_path,
-        format!("media/instance-icon.{extension}"),
-    )))
-}
-
-fn extract_instance_icon(
-    app: &AppHandle,
-    archive: &mut ZipArchive<fs::File>,
-    icon: &str,
-) -> Result<Option<String>, String> {
-    let Some(archive_name) = icon.strip_prefix(ARCHIVE_ICON_PREFIX) else {
-        return Ok(None);
-    };
-
-    let normalized = archive_name.replace('\\', "/");
-    if !normalized.starts_with("media/")
-        || normalized.contains("../")
-        || normalized.starts_with('/')
-    {
-        return Err("Packed instance image path is unsafe.".to_string());
-    }
-
-    let extension = Path::new(&normalized)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_lowercase())
-        .unwrap_or_else(|| "png".to_string());
-    if !["png", "jpg", "jpeg", "webp", "gif"].contains(&extension.as_str()) {
-        return Err("Packed instance image is not a supported image.".to_string());
-    }
-
-    let mut entry = archive
-        .by_name(&normalized)
-        .map_err(|error| format!("Cannot read packed instance image {normalized}: {error}"))?;
-    let icons_dir = app_data_dir(app)?.join("instance-icons");
-    fs::create_dir_all(&icons_dir).map_err(|error| {
-        format!(
-            "Cannot create icon directory {}: {error}",
-            icons_dir.display()
-        )
-    })?;
-    let target = icons_dir.join(format!(
-        "imported-instance-{}.{}",
-        chrono::Utc::now().timestamp_millis(),
-        extension
-    ));
-    let mut target_file = fs::File::create(&target)
-        .map_err(|error| format!("Cannot create imported icon {}: {error}", target.display()))?;
-    std::io::copy(&mut entry, &mut target_file)
-        .map_err(|error| format!("Cannot extract packed instance image: {error}"))?;
-    Ok(Some(format!(
-        "{LOCAL_FILE_ICON_PREFIX}{}",
-        target.to_string_lossy()
-    )))
-}
-
-fn add_directory_to_archive(
-    archive: &mut ZipWriter<fs::File>,
-    source_dir: &Path,
-    archive_prefix: &str,
-    options: SimpleFileOptions,
-    skipped_file_names: Option<&HashSet<String>>,
-) -> Result<(), String> {
-    if !source_dir.exists() || !source_dir.is_dir() {
-        return Ok(());
-    }
-
-    for entry in fs::read_dir(source_dir)
-        .map_err(|error| format!("Cannot read {}: {error}", source_dir.display()))?
-    {
-        let entry = entry.map_err(|error| {
-            format!(
-                "Cannot read directory entry in {}: {error}",
-                source_dir.display()
-            )
-        })?;
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        let archive_name = format!("{archive_prefix}/{name}").replace('\\', "/");
-
-        if path.is_dir() {
-            add_directory_to_archive(archive, &path, &archive_name, options, skipped_file_names)?;
-            continue;
-        }
-
-        if path.is_file() {
-            if skipped_file_names
-                .map(|names| names.contains(&name))
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            archive
-                .start_file(&archive_name, options)
-                .map_err(|error| format!("Cannot add {archive_name} to archive: {error}"))?;
-            let mut file = fs::File::open(&path)
-                .map_err(|error| format!("Cannot open {}: {error}", path.display()))?;
-            std::io::copy(&mut file, archive).map_err(|error| {
-                format!("Cannot write {} into archive: {error}", path.display())
-            })?;
-        }
-    }
-
-    Ok(())
-}
-
-fn extract_overrides(
-    archive: &mut ZipArchive<fs::File>,
-    game_directory: &str,
-) -> Result<(), String> {
-    let game_dir = expand_path(game_directory)?;
-    fs::create_dir_all(&game_dir).map_err(|error| {
-        format!(
-            "Cannot create game directory {}: {error}",
-            game_dir.display()
-        )
-    })?;
-
-    for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|error| format!("Cannot read archive entry: {error}"))?;
-        if entry.is_dir() {
-            continue;
-        }
-
-        let Some(relative_path) = safe_archive_relative_path(entry.name()) else {
-            continue;
-        };
-        let target = game_dir.join(relative_path);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                format!("Cannot create directory {}: {error}", parent.display())
-            })?;
-        }
-        let mut target_file = fs::File::create(&target)
-            .map_err(|error| format!("Cannot create {}: {error}", target.display()))?;
-        std::io::copy(&mut entry, &mut target_file)
-            .map_err(|error| format!("Cannot extract {}: {error}", target.display()))?;
-    }
-
-    Ok(())
 }
 
 #[tauri::command]
@@ -521,6 +299,10 @@ pub fn load_settings(app: AppHandle) -> Result<LauncherSettings, String> {
             minecraft_storage_directory: default_minecraft_storage_directory(),
             language: default_language(),
             discord_rich_presence_enabled: default_discord_rich_presence_enabled(),
+            auto_update_enabled: default_auto_update_enabled(),
+            initial_setup_completed: false,
+            open_downloads_automatically: true,
+            auto_backup_before_changes: true,
         },
     )
 }
@@ -530,8 +312,53 @@ pub fn save_settings(
     app: AppHandle,
     settings: LauncherSettings,
 ) -> Result<LauncherSettings, String> {
-    write_json(&app, "settings.json", &settings)?;
+    // Closing during background setup must not leave a partially written config.
+    use std::io::Write;
+    let directory = app_data_dir(&app)?;
+    let mut file = tempfile::NamedTempFile::new_in(&directory).map_err(|error| error.to_string())?;
+    file.write_all(&serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    file.as_file().sync_all().map_err(|error| error.to_string())?;
+    file.persist(directory.join("settings.json")).map_err(|error| error.to_string())?;
     Ok(settings)
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::LauncherSettings;
+
+    #[test]
+    fn existing_settings_enable_auto_updates_by_default() {
+        let settings: LauncherSettings = serde_json::from_value(serde_json::json!({
+            "defaultRamMb": 6144,
+            "jvmArgs": ""
+        })).unwrap();
+        assert!(settings.auto_update_enabled);
+        assert!(settings.initial_setup_completed);
+        assert!(settings.open_downloads_automatically);
+        assert!(settings.auto_backup_before_changes);
+    }
+
+    #[test]
+    fn disabled_auto_updates_survive_a_settings_round_trip() {
+        let settings: LauncherSettings = serde_json::from_value(serde_json::json!({
+            "defaultRamMb": 6144,
+            "jvmArgs": "",
+            "autoUpdateEnabled": false
+        })).unwrap();
+        let stored = serde_json::to_string(&settings).unwrap();
+        let loaded: LauncherSettings = serde_json::from_str(&stored).unwrap();
+        assert!(!loaded.auto_update_enabled);
+    }
+
+    #[test]
+    fn unfinished_first_run_survives_restart() {
+        let settings: LauncherSettings = serde_json::from_value(serde_json::json!({
+            "defaultRamMb": 6144, "jvmArgs": "", "initialSetupCompleted": false
+        })).unwrap();
+        let reloaded: LauncherSettings = serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert!(!reloaded.initial_setup_completed);
+    }
 }
 
 #[tauri::command]
@@ -608,179 +435,4 @@ pub fn copy_instance_icon(app: AppHandle, source_path: String) -> Result<String,
     fs::copy(Path::new(&source), &target)
         .map_err(|error| format!("Cannot copy icon to {}: {error}", target.display()))?;
     Ok(target.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-pub fn read_stellar_instance_file(
-    app: AppHandle,
-    path: String,
-) -> Result<StellarInstanceImportResult, String> {
-    let file_path = PathBuf::from(&path);
-    if !file_path.exists() {
-        return Err(format!(
-            "Selected instance file does not exist: {}",
-            file_path.display()
-        ));
-    }
-
-    let extension = file_path
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_lowercase())
-        .unwrap_or_default();
-
-    if extension != "stellarinstance" {
-        return Err("Selected file is not a .stellarinstance file.".to_string());
-    }
-
-    let mut is_archive = false;
-    let raw = match fs::File::open(&file_path)
-        .ok()
-        .and_then(|file| ZipArchive::new(file).ok())
-    {
-        Some(mut archive) => {
-            is_archive = true;
-            let mut entry = archive.by_name("instance.json").map_err(|error| {
-                format!(
-                    "Cannot find instance.json in {}: {error}",
-                    file_path.display()
-                )
-            })?;
-            let mut raw = String::new();
-            entry.read_to_string(&mut raw).map_err(|error| {
-                format!(
-                    "Cannot read instance.json in {}: {error}",
-                    file_path.display()
-                )
-            })?;
-            raw
-        }
-        None => fs::read_to_string(&file_path)
-            .map_err(|error| format!("Cannot read {}: {error}", file_path.display()))?,
-    };
-    let mut manifest: StellarInstanceFile = serde_json::from_str(&raw).map_err(|error| {
-        format!(
-            "Cannot parse instance manifest in {}: {error}",
-            file_path.display()
-        )
-    })?;
-
-    if manifest.format != "app.stellarlauncher.instance" {
-        return Err(
-            "This .stellarinstance file is not a Stellar Launcher instance manifest.".to_string(),
-        );
-    }
-
-    if is_archive {
-        let file = fs::File::open(&file_path)
-            .map_err(|error| format!("Cannot open {}: {error}", file_path.display()))?;
-        let mut archive = ZipArchive::new(file)
-            .map_err(|error| format!("Cannot read {}: {error}", file_path.display()))?;
-        extract_overrides(&mut archive, &manifest.instance.game_directory)?;
-        if let Some(imported_icon) =
-            extract_instance_icon(&app, &mut archive, &manifest.instance.icon)?
-        {
-            manifest.instance.icon = imported_icon;
-        }
-    }
-
-    Ok(StellarInstanceImportResult {
-        instance: manifest.instance,
-        mod_downloads: manifest.mod_downloads,
-    })
-}
-
-#[tauri::command]
-pub fn write_stellar_instance_file(
-    path: String,
-    instance: Instance,
-    included_folders: Vec<String>,
-    mod_downloads: Vec<StellarInstanceModDownload>,
-) -> Result<String, String> {
-    let mut file_path = PathBuf::from(&path);
-    if file_path
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_lowercase())
-        .as_deref()
-        != Some("stellarinstance")
-    {
-        file_path.set_extension("stellarinstance");
-    }
-
-    let mut exported_instance = instance;
-    let packed_instance_icon = archive_instance_icon(&exported_instance.icon)?;
-    if let Some((_, archive_name)) = &packed_instance_icon {
-        exported_instance.icon = format!("{ARCHIVE_ICON_PREFIX}{archive_name}");
-    }
-
-    let manifest = StellarInstanceFile {
-        format: "app.stellarlauncher.instance".to_string(),
-        version: 1,
-        included_folders: included_folders.clone(),
-        mod_downloads,
-        instance: exported_instance,
-    };
-    let raw = serde_json::to_string_pretty(&manifest)
-        .map_err(|error| format!("Cannot serialize .stellarinstance file: {error}"))?;
-    let file = fs::File::create(&file_path)
-        .map_err(|error| format!("Cannot create {}: {error}", file_path.display()))?;
-    let mut archive = ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-    archive
-        .start_file("instance.json", options)
-        .map_err(|error| {
-            format!(
-                "Cannot write instance.json to {}: {error}",
-                file_path.display()
-            )
-        })?;
-    archive.write_all(raw.as_bytes()).map_err(|error| {
-        format!(
-            "Cannot write instance manifest to {}: {error}",
-            file_path.display()
-        )
-    })?;
-    if let Some((source_path, archive_name)) = &packed_instance_icon {
-        add_file_to_archive(&mut archive, source_path, archive_name, options)?;
-    }
-    let game_dir = expand_path(&manifest.instance.game_directory)?;
-    let skipped_mod_file_names = manifest
-        .mod_downloads
-        .iter()
-        .flat_map(|mod_download| {
-            [
-                Some(mod_download.file_name.clone()),
-                mod_download.archive_file_name.clone(),
-                Some(format!("{}.disabled", mod_download.file_name)),
-            ]
-        })
-        .flatten()
-        .collect::<HashSet<_>>();
-
-    for folder in included_folders {
-        if !is_safe_folder_name(&folder) {
-            return Err(format!(
-                "Cannot export unsafe instance folder name: {folder}"
-            ));
-        }
-
-        let source_dir = game_dir.join(&folder);
-        let skipped_file_names = if folder == "mods" {
-            Some(&skipped_mod_file_names)
-        } else {
-            None
-        };
-        add_directory_to_archive(
-            &mut archive,
-            &source_dir,
-            &format!("overrides/{folder}"),
-            options,
-            skipped_file_names,
-        )?;
-    }
-    archive
-        .finish()
-        .map_err(|error| format!("Cannot finish {}: {error}", file_path.display()))?;
-    Ok(file_path.to_string_lossy().to_string())
 }

@@ -1,7 +1,16 @@
+import { translateUi } from "./uiTranslation";
+import LocalizedError from "./components/LocalizedError";
+import { UiLanguage } from "./uiLanguage";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import AppShell from "./components/AppShell";
+import FirstTimeGuide from "./components/FirstTimeGuide";
+import LauncherImportSection from "./components/LauncherImportSection";
+import LaunchErrorHelp from "./components/LaunchErrorHelp";
+import {hasDownloadRetry,retryDownload,forgetDownload} from "./services/downloadOperations";
+import { invoke } from "@tauri-apps/api/core";
 import LoadingScreen from "./components/LoadingScreen";
+import { useAutoUpdater } from "./hooks/useAutoUpdater";
 import { defaultLauncherSettings, defaultLauncherStatus, defaultThemeSettings } from "./data/mockData";
 import { Account } from "./models/account";
 import { DownloadTask } from "./models/download";
@@ -51,6 +60,7 @@ import {
   loadRunningInstancesLocal,
   loadSettings,
   loadTheme,
+  renameGameDirectory,
   saveRunningInstancesLocal,
   saveSettings,
   saveTheme
@@ -85,6 +95,21 @@ export default function App() {
   const [minecraftCache, setMinecraftCache] = useState<string[]>([]);
   const [storageError, setStorageError] = useState<string | undefined>();
   const [javaSetupBusy, setJavaSetupBusy] = useState(false);
+  const [setupReady, setSetupReady] = useState(false);
+  const [instanceMutationBusy, setInstanceMutationBusy] = useState(false);
+  const instanceMutationRef = useRef(false);
+  const setupStartedRef = useRef(false);
+  const javaSetupRef = useRef(false);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const [directoryRenameBusy, setDirectoryRenameBusy] = useState(false);
+  const [packOperationMessage, setPackOperationMessage] = useState<string>();
+  const [packOperationId, setPackOperationId] = useState<string>();
+  const packOperationRef = useRef(false);
+  const cancelledDownloads = useRef(new Set<string>());
+  const launchRequests = useRef(new Set<string>());
+  const settingsSaveRef = useRef<Promise<unknown>>(Promise.resolve());
+  const directoryRenameRef = useRef(false);
   const [javaSetupStatus, setJavaSetupStatus] = useState<string | undefined>();
   const [modrinthModsByInstance, setModrinthModsByInstance] = useState<Record<string, ModFile[]>>({});
   const [playtimeTick, setPlaytimeTick] = useState(Date.now());
@@ -99,6 +124,16 @@ export default function App() {
   const runningInstancesRef = useRef<RunningInstance[]>(runningInstances);
   const discordRpcActivityKeyRef = useRef("");
   const downloadProgressStatsRef = useRef(new Map<string, { downloadedMb: number; updatedAtMs: number; speedMbPerSecond: number }>());
+  const autoUpdateStatus = useAutoUpdater(
+    !startupLoading.active && settings.initialSetupCompleted,
+    settings.autoUpdateEnabled,
+    directoryRenameBusy || javaSetupBusy || Boolean(packOperationMessage) ||
+      runningInstances.some((running) => running.state !== "error") ||
+      downloadTasks.some((task) => task.status === "pending" || task.status === "downloading") ||
+      ["preparing", "downloading", "launching"].includes(launchStatus.state)
+  );
+  const installingUpdate = autoUpdateStatus.phase === "installing" || autoUpdateStatus.phase === "restarting";
+  const packDownloadTask = downloadTasks.find((task) => task.id === packOperationId);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--accent", theme.accentColor);
@@ -113,6 +148,8 @@ export default function App() {
 
     const loadStartupData = async () => {
       try {
+        const loadedSettings = await loadSettings(defaultLauncherSettings);
+        if (mounted) setSettings(loadedSettings);
         setLoadingStep(4, "Loading accounts");
         const loadedAccounts = await loadAccounts([]);
 
@@ -127,7 +164,6 @@ export default function App() {
         const loadedTheme = await loadTheme(defaultThemeSettings);
 
         setLoadingStep(36, "Loading settings");
-        const loadedSettings = await loadSettings(defaultLauncherSettings);
 
         setLoadingStep(46, "Loading local Minecraft cache");
         const loadedMinecraftCache = await loadLocalMinecraftCache();
@@ -234,6 +270,8 @@ export default function App() {
   };
 
   const handleDismissDownloadTask = (taskId: string) => {
+    forgetDownload(taskId);
+    cancelledDownloads.current.delete(taskId);
     setDownloadTasks((current) => current.filter((task) => task.id !== taskId));
     downloadProgressStatsRef.current.delete(taskId);
   };
@@ -398,7 +436,7 @@ export default function App() {
     let cancelled = false;
     let inspecting = false;
     const inspectRunningInstances = async () => {
-      if (inspecting) return;
+      if (inspecting || packOperationRef.current) return;
       const snapshot = runningInstancesRef.current;
       if (snapshot.length === 0) return;
 
@@ -418,7 +456,7 @@ export default function App() {
       );
       inspecting = false;
 
-      if (cancelled) return;
+      if (cancelled || packOperationRef.current) return;
 
       const endedRuns = checks.filter((check) => !check.alive).map((check) => check.running);
       if (endedRuns.length > 0) {
@@ -499,7 +537,7 @@ export default function App() {
   const simulateDownloadTasks = async (tasks: DownloadTask[]) => {
     if (tasks.length === 0) return;
 
-    setDownloadsOpen(true);
+    if (settingsRef.current.openDownloadsAutomatically) setDownloadsOpen(true);
     setDownloadTasks((current) => [...tasks, ...current]);
 
     await new Promise<void>((resolve) => {
@@ -563,7 +601,7 @@ export default function App() {
         }
       ])
     );
-    setDownloadsOpen(true);
+    if (settingsRef.current.openDownloadsAutomatically) setDownloadsOpen(true);
     setDownloadTasks((current) => [...tasks, ...current]);
 
     const intervalId = window.setInterval(() => {
@@ -615,8 +653,10 @@ export default function App() {
   const startMinecraftDownloadTask = (instance: Instance, targetPath: string): string => {
     const now = new Date().toISOString();
     const taskId = minecraftDownloadTaskId(instance.id);
+    cancelledDownloads.current.delete(taskId);
     const task: DownloadTask = {
       id: taskId,
+      cancelOperationId: `minecraft-${instance.id}`,
       instanceId: instance.id,
       instanceName: instance.name,
       label: "Preparing Minecraft files",
@@ -630,7 +670,7 @@ export default function App() {
       updatedAt: now
     };
 
-    setDownloadsOpen(true);
+    if (settingsRef.current.openDownloadsAutomatically) setDownloadsOpen(true);
     setDownloadTasks((current) => [task, ...current.filter((existing) => existing.id !== taskId)]);
     return taskId;
   };
@@ -642,7 +682,7 @@ export default function App() {
           ? {
               ...task,
               label: label ?? task.label,
-              status,
+              status: status === "error" && cancelledDownloads.current.has(taskId) ? "cancelled" : status,
               downloadedMb: status === "completed" ? task.totalMb : task.downloadedMb,
               percent: status === "completed" ? 100 : task.percent,
               etaSeconds: status === "completed" ? 0 : undefined,
@@ -671,7 +711,7 @@ export default function App() {
         : previousStats?.speedMbPerSecond ?? 0;
     downloadProgressStatsRef.current.set(taskId, { downloadedMb, updatedAtMs: nowMs, speedMbPerSecond });
 
-    setDownloadsOpen(true);
+    if (settingsRef.current.openDownloadsAutomatically) setDownloadsOpen(true);
     setDownloadTasks((current) => {
       const existing = current.find((task) => task.id === taskId);
       const nextTotalMb = isCompleted ? Math.max(downloadedMb, existing?.totalMb ?? 1) : (totalMb ?? existing?.totalMb ?? Math.max(downloadedMb, 1));
@@ -679,6 +719,7 @@ export default function App() {
       const remainingMb = Math.max(nextTotalMb - downloadedMb, 0);
       const nextTask: DownloadTask = {
         id: taskId,
+        cancelOperationId: `minecraft-${progress.instanceId}`,
         instanceId: progress.instanceId,
         instanceName: progress.instanceName,
         label: progress.fileName || existing?.label || "Minecraft files",
@@ -700,13 +741,15 @@ export default function App() {
     const now = new Date().toISOString();
     const estimates: Record<JavaSetupProgress["version"], number> = {
       8: 190,
+      16: 195,
       17: 195,
       21: 205,
       25: 215
     };
 
-    return ([8, 17, 21, 25] as JavaSetupProgress["version"][]).map((version) => ({
+    return ([21] as JavaSetupProgress["version"][]).map((version) => ({
       id: `java-setup-${version}-${Date.now().toString(36)}`,
+      cancelOperationId: "java-setup",
       instanceId: `java-${version}`,
       instanceName: `Adoptium Java ${version}`,
       label: `Eclipse Temurin JDK ${version}`,
@@ -779,10 +822,11 @@ export default function App() {
   const createModDownloadTask = (instanceName: string, label: string, targetPath: string): string => {
     const now = new Date().toISOString();
     const operationId = `mod-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    setDownloadsOpen(true);
+    if (settingsRef.current.openDownloadsAutomatically) setDownloadsOpen(true);
     setDownloadTasks((current) => [
       {
         id: operationId,
+        cancelOperationId: operationId,
         instanceId: operationId,
         instanceName,
         label,
@@ -806,7 +850,7 @@ export default function App() {
         task.id === operationId
           ? {
               ...task,
-              status: "error",
+              status: cancelledDownloads.current.has(operationId) ? "cancelled" : "error",
               updatedAt: new Date().toISOString()
             }
           : task
@@ -852,7 +896,10 @@ export default function App() {
   };
 
   const handleSetupJava = async () => {
-    if (javaSetupBusy) return;
+    if (javaSetupRef.current) return;
+    if (storageError) { setJavaSetupStatus(storageError); return; }
+    javaSetupRef.current = true;
+    setSetupReady(false);
 
     const tasks = createJavaSetupDownloadTasks();
     const taskIds = new Map(tasks.map((task) => [Number(task.instanceId.replace("java-", "")), task.id]));
@@ -860,26 +907,37 @@ export default function App() {
     tasks.forEach((task) => downloadProgressStatsRef.current.delete(task.id));
     setJavaSetupBusy(true);
     setJavaSetupStatus("Downloading Eclipse Temurin Java runtimes...");
-    setDownloadsOpen(true);
+    if (settingsRef.current.initialSetupCompleted) if (settingsRef.current.openDownloadsAutomatically) setDownloadsOpen(true);
     setDownloadTasks((current) => [...tasks, ...current]);
 
-    const unlisten = await listen<JavaSetupProgress>("java-setup-progress", (event) => {
-      applyJavaSetupProgress(taskIds, event.payload);
-      setJavaSetupStatus(`Java ${event.payload.version}: ${event.payload.message}`);
-    });
-
+    let unlisten: (() => void) | undefined;
     try {
-      const installedPaths = await setupAdoptiumJava(settings.launcherFolder);
+      unlisten = await listen<JavaSetupProgress>("java-setup-progress", (event) => {
+        if (event.payload.operationId && event.payload.operationId !== "java-setup") return;
+        applyJavaSetupProgress(taskIds, event.payload);
+        setJavaSetupStatus(`Java ${event.payload.version}: ${event.payload.message}`);
+      });
+      await settingsSaveRef.current.catch(() => undefined);
+      if (!settingsRef.current.initialSetupCompleted) {
+        // Persist an unfinished first run before starting work, so closing resumes it.
+        await saveSettings(settingsRef.current);
+        await invoke("prepare_setup_directories");
+      }
+      const installedPaths = await setupAdoptiumJava(settingsRef.current.launcherFolder);
+      await settingsSaveRef.current.catch(() => undefined);
       const nextSettings = {
-        ...settings,
+        ...settingsRef.current,
         java8Path: installedPaths.java8Path,
         java17Path: installedPaths.java17Path,
         java21Path: installedPaths.java21Path,
         java25Path: installedPaths.java25Path
       };
+      settingsRef.current = nextSettings;
       setSettings(nextSettings);
-      await saveSettings(nextSettings);
+      settingsSaveRef.current = settingsSaveRef.current.catch(() => undefined).then(() => saveSettings(nextSettings));
+      await settingsSaveRef.current;
       setJavaSetupStatus("Adoptium Java setup completed.");
+      setSetupReady(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setJavaSetupStatus(message);
@@ -888,20 +946,46 @@ export default function App() {
           taskIds.has(Number(task.instanceId.replace("java-", "")))
             ? {
                 ...task,
-                status: task.status === "completed" ? task.status : "error",
+                status: task.status === "completed" ? task.status : cancelledDownloads.current.has(task.id) ? "cancelled" : "error",
                 updatedAt: new Date().toISOString()
               }
             : task
         )
       );
     } finally {
-      unlisten();
+      unlisten?.();
+      javaSetupRef.current = false;
       tasks.forEach((task) => downloadProgressStatsRef.current.delete(task.id));
       setJavaSetupBusy(false);
     }
   };
 
+  useEffect(() => {
+    if (startupLoading.active || settings.initialSetupCompleted || setupStartedRef.current) return;
+    setupStartedRef.current = true;
+    void handleSetupJava();
+  }, [startupLoading.active, settings.initialSetupCompleted]);
+
+  const finishSetup = async () => {
+    if (!setupReady || javaSetupRef.current || packOperationRef.current) return;
+    const next = { ...settingsRef.current, initialSetupCompleted: true };
+    await settingsSaveRef.current;
+    await saveSettings(next);
+    settingsRef.current = next;
+    setSettings(next);
+    setActivePage("home");
+  };
+
+  const ui = (text: string) => translateUi(text, settings.language);
+  useEffect(() => { document.documentElement.lang = settings.language; }, [settings.language]);
+
   const handleLaunch = async (instance: Instance, account = activeAccount) => {
+    if (launchRequests.current.has(instance.id)) return;
+    launchRequests.current.add(instance.id);
+    try { await launchInstance(instance,account); } finally {launchRequests.current.delete(instance.id);}
+  };
+  const launchInstance = async (instance: Instance, account = activeAccount) => {
+    if (!settingsRef.current.initialSetupCompleted || directoryRenameRef.current || installingUpdate || packOperationMessage) return;
     if (runningInstanceIds.has(instance.id)) {
       setLaunchStatus({
         state: "error",
@@ -919,6 +1003,23 @@ export default function App() {
       updatedAt: new Date().toISOString()
     });
 
+    if (account && (account.type === "offline" || account.loginStatus === "active")) {
+      const id=`java-runtime-${instance.id}`;
+      cancelledDownloads.current.delete(id);
+      const now=new Date().toISOString();
+      setDownloadTasks(current=>[{id,instanceId:instance.id,instanceName:instance.name,targetPath:settings.launcherFolder,cancelOperationId:`java-${instance.id}`,label:"Preparing Java automatically",status:"pending",downloadedMb:0,totalMb:0,percent:0,startedAt:now,updatedAt:now},...current.filter(task=>task.id!==id)]);
+      let unlisten:(()=>void)|undefined;
+      try {
+        unlisten=await listen<JavaSetupProgress>("java-setup-progress",({payload})=>{if(payload.operationId===`java-${instance.id}`) applyJavaSetupProgress(new Map([[payload.version,id]]),payload);});
+        const javaPath = await invoke<string>("ensure_instance_java", { instance });
+        instance = { ...instance, javaPath };
+        setDownloadTasks(current=>current.map(task=>task.id===id?{...task,status:"completed",percent:100}:task));
+      } catch (error) {
+        setDownloadTasks(current=>current.map(task=>task.id===id?{...task,status:cancelledDownloads.current.has(id)?"cancelled":"error"}:task));
+        setLaunchStatus({state:"error", message:String(error), instanceId:instance.id, updatedAt:new Date().toISOString()});
+        return;
+      } finally {unlisten?.();}
+    }
     const commandStatus = await validateLaunch(instance, account, settings);
     setLaunchStatus(commandStatus);
 
@@ -1031,6 +1132,7 @@ export default function App() {
       await addPlaytimeForRuns([runningInstance]);
     }
 
+    setLaunchStatus(idleStatus);
     updateRunningInstance(runId, "error", "Stopped from launcher", "Process stopped by user");
     window.setTimeout(() => {
       setRunningInstances((current) => current.filter((running) => running.id !== runId));
@@ -1046,7 +1148,9 @@ export default function App() {
   };
 
   const handleAccountLoggedIn = async (account: Account) => {
-    setAccounts(sortAccounts(await upsertAccount(accounts, account)));
+    const next = sortAccounts(await upsertAccount(accountsRef.current, account));
+    accountsRef.current = next;
+    setAccounts(next);
   };
 
   const handleCreateOfflineAccount = async (name: string) => {
@@ -1109,22 +1213,40 @@ export default function App() {
   };
 
   const handleCreateInstance = async (input: CreateInstanceInput) => {
-    setStoredInstances(sortInstances(await createInstance(storedInstances, input)));
+    if (packOperationRef.current) throw new Error("Wait for the import to finish.");
+    if (instanceMutationRef.current) throw new Error("An instance is already being saved.");
+    instanceMutationRef.current = true;
+    setInstanceMutationBusy(true);
+    try {
+      const next = sortInstances(await createInstance(storedInstancesRef.current, input));
+      storedInstancesRef.current = next;
+      setStoredInstances(next);
+    } finally { instanceMutationRef.current = false; setInstanceMutationBusy(false); }
   };
 
   const handleUpdateInstance = async (instanceId: string, input: CreateInstanceInput) => {
-    setStoredInstances(sortInstances(await updateInstance(storedInstances, instanceId, input)));
+    if(packOperationRef.current||runningInstances.some(item=>item.instance.id===instanceId&&item.state!=="error"))throw new Error("Stop the instance and wait for active operations before editing.");
+    const old=storedInstancesRef.current.find(item=>item.id===instanceId);
+    const changed=old&&(old.minecraftVersion!==input.minecraftVersion||old.loaderType!==input.loaderType||old.loaderVersion!==input.loaderVersion);
+    if(changed&&settings.autoBackupBeforeChanges){
+      packOperationRef.current=true;setPackOperationMessage(settings.language==="de"?"Sicherung vor Versionswechsel…":"Backing up before version change…");
+      try{await invoke("create_instance_backup",{instanceId});}finally{packOperationRef.current=false;setPackOperationMessage(undefined);}
+    }
+    const next=sortInstances(await updateInstance(storedInstancesRef.current,instanceId,input));storedInstancesRef.current=next;setStoredInstances(next);
   };
 
   const handleDeleteInstance = async (instanceId: string) => {
+    if (packOperationRef.current || launchRequests.current.size) return;
     setStoredInstances(await deleteInstance(storedInstances, instanceId));
   };
 
   const handleToggleInstanceFavorite = async (instanceId: string) => {
+    if (packOperationRef.current || launchRequests.current.size) return;
     setStoredInstances(await toggleInstanceFavorite(storedInstances, instanceId));
   };
 
   const handleMoveInstance = async (instanceId: string, direction: -1 | 1) => {
+    if (packOperationRef.current || launchRequests.current.size) return;
     setStoredInstances(await moveInstance(storedInstances, instanceId, direction));
   };
 
@@ -1134,11 +1256,77 @@ export default function App() {
   };
 
   const handleSettingsSave = async (nextSettings: LauncherSettings) => {
+    if (directoryRenameRef.current || packOperationMessage) return;
+    settingsRef.current = nextSettings;
     setSettings(nextSettings);
-    await saveSettings(nextSettings);
+    settingsSaveRef.current = settingsSaveRef.current.catch(() => undefined).then(() => saveSettings(nextSettings));
+    try { await settingsSaveRef.current; setStorageError(undefined); }
+    catch (error) { setStorageError(String(error)); }
   };
 
-  const page = {
+  const handleRenameGameDirectory = async (newName: string) => {
+    if (directoryRenameRef.current || packOperationMessage) return;
+    if (runningInstances.some((running) => running.state !== "error") || javaSetupBusy ||
+        downloadTasks.some((task) => task.status === "pending" || task.status === "downloading") ||
+        launchStatus.state === "preparing") {
+      throw new Error("Stop Minecraft and wait for active downloads to finish before renaming the folder.");
+    }
+    directoryRenameRef.current = true;
+    setDirectoryRenameBusy(true);
+    try {
+      await settingsSaveRef.current;
+      const result = await renameGameDirectory(settings.gameDirectory, newName);
+      setSettings(result.settings);
+      storedInstancesRef.current = result.instances;
+      setStoredInstances(sortInstances(result.instances));
+      setModrinthModsByInstance({});
+    } finally {
+      directoryRenameRef.current = false;
+      setDirectoryRenameBusy(false);
+    }
+  };
+
+  const importerProps = {
+    disabled: directoryRenameBusy || instanceMutationBusy || runningInstances.some((item) => item.state !== "error"),
+    onImported: (instances: Instance[]) => { storedInstancesRef.current = instances; setStoredInstances(sortInstances(instances)); },
+    onBusyChange: (message?: string) => { packOperationRef.current = Boolean(message); setPackOperationMessage(message); setPackOperationId(undefined); }
+  };
+  const cancelDownloadTask = async (id:string) => {
+    const task=downloadTasks.find(item=>item.id===id);if(!task?.cancelOperationId)return;
+    cancelledDownloads.current.add(id);
+    try{await invoke("cancel_operation",{operationId:task.cancelOperationId});}catch(error){setJavaSetupStatus(String(error));}
+  };
+  const canRetryDownload = (task:DownloadTask) => hasDownloadRetry(task.id)||task.id.startsWith("java-setup-")||Boolean(storedInstances.find(item=>item.id===task.instanceId));
+  const retryDownloadTask = async (id:string) => {
+    const task=downloadTasks.find(item=>item.id===id);if(!task||packOperationRef.current||runningInstances.some(item=>item.state!=="error"))return;
+    cancelledDownloads.current.delete(id);
+    if(task.id.startsWith("java-setup-")){void handleSetupJava();return;}
+    if(!hasDownloadRetry(id)){const instance=storedInstances.find(item=>item.id===task.instanceId);if(instance)void handleLaunch(instance);return;}
+    packOperationRef.current=true;setPackOperationMessage(settings.language==="de"?"Download wird wiederholt…":"Retrying download…");setPackOperationId(id);
+    setDownloadTasks(current=>current.map(item=>item.id===id?{...item,status:"pending",percent:0,downloadedMb:0}:item));
+    try{
+      const result=await retryDownload(id);
+      if(result.command==="import_mrpack"){const instances=result.result as Instance[];storedInstancesRef.current=instances;setStoredInstances(sortInstances(instances));}
+      else setModrinthModsByInstance({});
+      window.dispatchEvent(new CustomEvent("stellar-download-retried",{detail:result.command}));
+    }catch(error){failTrackedDownloadTask(id);setDownloadTasks(current=>current.map(item=>item.id===id?{...item,label:String(error)}:item));}
+    finally{packOperationRef.current=false;setPackOperationMessage(undefined);setPackOperationId(undefined);}
+  };
+  const setupGuideDisabled = javaSetupBusy || directoryRenameBusy || Boolean(packOperationMessage) ||
+    runningInstances.some((item) => item.state !== "error") || downloadTasks.some((task) => task.status === "pending" || task.status === "downloading");
+  const reopenSetup = async () => {
+    if (setupGuideDisabled) return;
+    try {
+      await settingsSaveRef.current;
+      const next = { ...settingsRef.current, initialSetupCompleted: false };
+      await saveSettings(next);
+      setupStartedRef.current = false;
+      setSetupReady(false);
+      settingsRef.current = next;
+      setSettings(next);
+    } catch (reason) { setJavaSetupStatus(String(reason)); }
+  };
+  const pages = {
     home: (
       <HomePage
         account={activeAccount}
@@ -1161,6 +1349,8 @@ export default function App() {
         runningInstances={runningInstances}
         settings={settings}
         onCreateInstance={handleCreateInstance}
+        onImportedInstances={(instances) => { storedInstancesRef.current = instances; setStoredInstances(sortInstances(instances)); }}
+        onPackOperationChange={(message, operationId) => { packOperationRef.current = Boolean(message); setPackOperationMessage(message); setPackOperationId(operationId); }}
         onUpdateInstance={handleUpdateInstance}
         onDeleteInstance={handleDeleteInstance}
         onToggleFavorite={handleToggleInstanceFavorite}
@@ -1175,6 +1365,7 @@ export default function App() {
     ),
     accounts: (
       <Accounts
+        onboarding={!settings.initialSetupCompleted}
         accounts={accounts}
         skins={skinLibrary}
         language={settings.language}
@@ -1194,28 +1385,50 @@ export default function App() {
       />
     ),
     theme: <ThemeEditorPage theme={theme} onThemeChange={handleThemeChange} />,
-    settings: <SettingsPage javaSetupBusy={javaSetupBusy} javaSetupStatus={javaSetupStatus} settings={settings} onSave={handleSettingsSave} onSetupJava={handleSetupJava} />
-  }[activePage];
+    settings: <SettingsPage javaSetupBusy={javaSetupBusy} javaSetupStatus={javaSetupStatus} settings={settings} onSave={handleSettingsSave} onSetupJava={handleSetupJava} onRenameGameDirectory={handleRenameGameDirectory} autoUpdateStatus={autoUpdateStatus.message} importer={importerProps} onSetupGuide={reopenSetup} setupGuideDisabled={setupGuideDisabled} onAccounts={()=>setActivePage("accounts")} />
+  };
 
   return (
-    <div style={{ "--accent": theme.accentColor } as React.CSSProperties}>
-      {startupLoading.active ? (
+    <UiLanguage.Provider value={settings.language}><div style={{ "--accent": theme.accentColor } as React.CSSProperties}>
+      {installingUpdate ? (
+        <LoadingScreen message={autoUpdateStatus.message} progress={autoUpdateStatus.progress ?? 0} />
+      ) : startupLoading.active ? (
         <LoadingScreen message={startupLoading.message} progress={startupLoading.progress} />
       ) : (
         <AppShell
+          setupMode={!settings.initialSetupCompleted}
           activePage={activePage}
           downloadsOpen={downloadsOpen}
           downloadTasks={downloadTasks}
           settings={settings}
           totalPlaytimeSeconds={totalPlaytimeSeconds}
           onDismissDownloadTask={handleDismissDownloadTask}
+          onCancelDownloadTask={cancelDownloadTask}
+          onRetryDownloadTask={retryDownloadTask}
+          canRetryDownload={canRetryDownload}
           onSettingsChange={handleSettingsSave}
           onToggleDownloads={() => setDownloadsOpen((current) => !current)}
           onNavigate={setActivePage}
         >
-          {page}
+          {storageError && settings.initialSetupCompleted && <div role="alert" className="error-panel"><LocalizedError message={storageError}/></div>}
+          {settings.initialSetupCompleted&&<LaunchErrorHelp status={launchStatus} language={settings.language} onRetry={()=>{const instance=storedInstances.find(item=>item.id===launchStatus.instanceId);if(instance)void handleLaunch(instance);}} onAccounts={()=>setActivePage("accounts")} onSettings={()=>setActivePage("settings")} onDismiss={()=>setLaunchStatus(idleStatus)}/>}
+          {settings.initialSetupCompleted ? pages[activePage] : <FirstTimeGuide settings={settings} accounts={pages.accounts} importer={<LauncherImportSection compact settings={settings} {...importerProps} />} instances={storedInstances} tasks={downloadTasks} busy={javaSetupBusy} ready={setupReady} operationBusy={Boolean(packOperationMessage)} status={javaSetupStatus} onRetry={handleSetupJava} onFinish={finishSetup} onCreate={handleCreateInstance} />}
+          {packOperationMessage ? (
+            <div className="modal-backdrop pack-operation-overlay" role="dialog" aria-modal="true" aria-label={ui("Modpack operation")}>
+              <div className="card">
+                <p role="status">{ui(packOperationMessage)}</p>
+                {packDownloadTask ? <>
+                  <p>{ui(packDownloadTask.label)}</p>
+                  {packDownloadTask.cancelOperationId&&<button className="button button-secondary" onClick={()=>void cancelDownloadTask(packDownloadTask.id)}>{settings.language==="de"?"Abbrechen":"Cancel"}</button>}
+                  <div className="download-progress-track"><div className="download-progress-fill" style={{ width: `${packDownloadTask.percent}%` }} /></div>
+                  <p>{packDownloadTask.percent.toFixed(0)}% · {packDownloadTask.downloadedMb.toFixed(1)} / {packDownloadTask.totalMb.toFixed(1)} MB</p>
+                </> : <p>{ui("Please wait until the operation finishes.")}</p>}
+              </div>
+            </div>
+          ) : null}
+          {directoryRenameBusy ? <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={ui("Renaming game directory")}><p role="status">{ui("Renaming game directory...")}</p></div> : null}
         </AppShell>
       )}
-    </div>
+    </div></UiLanguage.Provider>
   );
 }

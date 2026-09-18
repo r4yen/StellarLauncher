@@ -1,3 +1,4 @@
+import { useUiText } from "../uiLanguage";
 import Logo from "./Logo";
 
 interface LoadingScreenProps {
@@ -6,6 +7,7 @@ interface LoadingScreenProps {
 }
 
 export default function LoadingScreen({ message, progress }: LoadingScreenProps) {
+  const ui = useUiText();
   const boundedProgress = Math.max(0, Math.min(progress, 100));
 
   return (
@@ -15,9 +17,9 @@ export default function LoadingScreen({ message, progress }: LoadingScreenProps)
         <Logo size="lg" />
         <div className="loading-copy">
           <h1>Stellar Launcher</h1>
-          <p>{message}</p>
+          <p>{ui(message)}</p>
         </div>
-        <div className="loading-progress-track" aria-label="Loading progress">
+        <div className="loading-progress-track" aria-label={ui("Loading progress")}>
           <div className="loading-progress-fill" style={{ width: `${boundedProgress}%` }} />
         </div>
         <span>{Math.round(boundedProgress)}%</span>

@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export interface JavaSetupProgress {
-  version: 8 | 17 | 21 | 25;
+  operationId?: string;
+  version: 8 | 16 | 17 | 21 | 25;
   status: "pending" | "downloading" | "extracting" | "completed" | "error";
   downloadedBytes: number;
   totalBytes?: number;
@@ -17,5 +18,5 @@ export interface JavaSetupResult {
 }
 
 export async function setupAdoptiumJava(launcherFolder: string): Promise<JavaSetupResult> {
-  return invoke<JavaSetupResult>("setup_adoptium_java", { launcherFolder });
+  return invoke<JavaSetupResult>("setup_adoptium_java", { launcherFolder, versions: [21] });
 }

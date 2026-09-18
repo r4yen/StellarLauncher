@@ -1,6 +1,6 @@
+import { useUiText } from "../uiLanguage";
 import { Database, Gauge, HardDrive, Users } from "lucide-react";
 import LaunchControl from "../components/LaunchControl";
-import Logo from "../components/Logo";
 import RunningInstanceCard from "../components/RunningInstanceCard";
 import Card from "../components/ui/Card";
 import { Language } from "../i18n";
@@ -30,19 +30,9 @@ export default function HomePage({
   onLaunch,
   onStopRunningInstance
 }: HomePageProps) {
+  const ui = useUiText();
   return (
     <div className="page-stack">
-      <section className="hero-panel">
-        <div className="hero-glow" />
-        <div className="hero-content">
-          <Logo size="lg" />
-          <div>
-            <h1>Stellar Launcher</h1>
-            <p>Manage accounts, profiles and future Minecraft launch flows from one polished Windows desktop app.</p>
-          </div>
-        </div>
-      </section>
-
       <LaunchControl
         accounts={accounts}
         instances={instances}
@@ -56,15 +46,15 @@ export default function HomePage({
         <Card>
           <div className="stat-card">
             <Users size={20} />
-            <span>Accounts</span>
-            <strong>{account ? account.username : "None"}</strong>
+            <span>Account</span>
+            <strong>{account ? account.username : ui("None")}</strong>
           </div>
         </Card>
         <Card>
           <div className="stat-card">
             <Database size={20} />
-            <span>Instances</span>
-            <strong>{instances.length} profiles</strong>
+            <span>{ui("Instances")}</span>
+            <strong>{ui(instances.length === 1 ? "1 profile" : "{count} profiles", { count: instances.length })}</strong>
           </div>
         </Card>
         <Card>
@@ -77,16 +67,16 @@ export default function HomePage({
         <Card>
           <div className="stat-card">
             <HardDrive size={20} />
-            <span>Running</span>
-            <strong>{runningInstances.length} active</strong>
+            <span>{ui("Running")}</span>
+            <strong>{runningInstances.length} {language === "de" ? (runningInstances.length === 1 ? "Instanz" : "Instanzen") : (runningInstances.length === 1 ? "instance" : "instances")}</strong>
           </div>
         </Card>
       </section>
 
       <section className="section-stack">
         <div className="section-heading">
-          <span>Live sessions</span>
-          <h2>Running instances</h2>
+          <span>{ui("Live sessions")}</span>
+          <h2>{ui("Running instances")}</h2>
         </div>
         {runningInstances.length > 0 ? (
           <div className="running-list">
@@ -96,8 +86,8 @@ export default function HomePage({
           </div>
         ) : (
           <Card className="empty-state">
-            <h3>No running instance</h3>
-            <p>Select an instance and an active account above to start a local mock launch.</p>
+            <h3>{ui("No running instance")}</h3>
+            <p>{ui("Select an instance and an account, then press Play.")}</p>
           </Card>
         )}
       </section>

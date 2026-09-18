@@ -13,8 +13,12 @@ It provides local account management, instance creation, mod handling, live laun
 - Live Minecraft launch status and console log display
 - Local Minecraft file preparation and downloader status panel
 - Mod manager for loader instances
+- Modrinth `.mrpack` import and export with optional client files, verified downloads and isolated pack folders
 - Custom frameless desktop title bar
 - Favorite instances and accounts with manual ordering
+- Automatic signed updates through GitHub Releases, enabled by default and configurable in Settings
+
+See [AutoUpdater setup and releases](docs/auto-updater.md) for the signing key and GitHub Actions setup.
 
 ## Commands
 

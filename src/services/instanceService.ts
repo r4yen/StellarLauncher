@@ -98,7 +98,7 @@ export function canMoveInstance(instances: Instance[], instanceId: string, direc
   return Boolean(sorted[index].isFavorite) === Boolean(sorted[target].isFavorite);
 }
 
-export function formatPlaytime(totalSeconds = 0): string {
+export function formatPlaytime(totalSeconds = 0, language: "en" | "de" = "en"): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const units = [
     { label: "day", seconds: 86400 },
@@ -113,7 +113,9 @@ export function formatPlaytime(totalSeconds = 0): string {
     const value = Math.floor(remaining / unit.seconds);
     if (value <= 0 && parts.length === 0 && unit.label !== "second") continue;
     if (value > 0 || unit.label === "second") {
-      parts.push(`${value} ${unit.label}${value === 1 ? "" : "s"}`);
+      const german: Record<string, [string, string]> = {day:["Tag","Tage"],hour:["Stunde","Stunden"],minute:["Minute","Minuten"],second:["Sekunde","Sekunden"]};
+      const label = language === "de" ? german[unit.label][value === 1 ? 0 : 1] : `${unit.label}${value === 1 ? "" : "s"}`;
+      parts.push(`${value} ${label}`);
       remaining -= value * unit.seconds;
     }
     if (parts.length === 2) break;
@@ -122,7 +124,7 @@ export function formatPlaytime(totalSeconds = 0): string {
   return parts.join(" ");
 }
 
-export function formatCompactPlaytime(totalSeconds = 0): string {
+export function formatCompactPlaytime(totalSeconds = 0, language: "en" | "de" = "en"): string {
   const seconds = Math.max(0, Math.floor(totalSeconds));
   const units = [
     { label: "y", seconds: 31536000 },
@@ -139,7 +141,8 @@ export function formatCompactPlaytime(totalSeconds = 0): string {
     const value = Math.floor(remaining / unit.seconds);
     if (value <= 0 && parts.length === 0 && unit.label !== "sec") continue;
     if (value > 0 || unit.label === "sec") {
-      parts.push(`${value}${unit.label}`);
+      const german: Record<string, string> = {y:"J",w:"W",d:"T",h:"Std",min:"Min",sec:"Sek"};
+      parts.push(`${value}${language === "de" ? german[unit.label] : unit.label}`);
       remaining -= value * unit.seconds;
     }
     if (parts.length === 2) break;

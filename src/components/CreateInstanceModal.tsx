@@ -1,3 +1,5 @@
+import LocalizedError from "./LocalizedError";
+import { useUiText } from "../uiLanguage";
 import { ImagePlus, X } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -17,25 +19,21 @@ interface CreateInstanceModalProps {
   open: boolean;
   settings: LauncherSettings;
   onClose: () => void;
-  onCreate: (input: CreateInstanceInput) => void;
-  onUpdate?: (instanceId: string, input: CreateInstanceInput) => void;
+  onCreate: (input: CreateInstanceInput) => void | Promise<void>;
+  onUpdate?: (instanceId: string, input: CreateInstanceInput) => void | Promise<void>;
 }
 
 const loaderTypes: LoaderType[] = ["vanilla", "fabric", "forge", "neoforge", "quilt"];
 
-function defaultProfileDirectory(instanceName: string): string {
-  const profileName = instanceName.trim().replace(/[<>:"/\\|?*]/g, "-") || "<Instance Name>";
-  const isLinux = typeof navigator !== "undefined" && /linux/i.test(navigator.userAgent);
-  return isLinux ? `$HOME/.local/share/StellarLauncher/profiles/${profileName}` : `%APPDATA%\\StellarLauncher\\profiles\\${profileName}`;
-}
-
 export default function CreateInstanceModal({ editingInstance, open, settings, onClose, onCreate, onUpdate }: CreateInstanceModalProps) {
+  const ui = useUiText();
   const [versions, setVersions] = useState<MinecraftVersion[]>([]);
   const [loaderVersions, setLoaderVersions] = useState<LoaderVersion[]>([]);
   const [loaderVersionsLoading, setLoaderVersionsLoading] = useState(false);
   const [loaderVersionsError, setLoaderVersionsError] = useState<string | undefined>();
   const [imagePickerOpen, setImagePickerOpen] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<CreateInstanceInput>({
     name: "",
     minecraftVersion: "1.21.5",
@@ -80,7 +78,7 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
             notes: ""
           }
     );
-  }, [editingInstance, open, settings]);
+  }, [editingInstance, open, settings.defaultRamMb, settings.jvmArgs]);
 
   useEffect(() => {
     if (!open) return;
@@ -135,68 +133,70 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
   const submitInput = useMemo(
     () => ({
       ...form,
-      gameDirectory: form.gameDirectory.trim() || defaultProfileDirectory(form.name)
+      gameDirectory: form.gameDirectory.trim() || settings.gameDirectory.trim()
     }),
-    [form]
+    [form, settings.gameDirectory]
   );
   const canSubmit = useMemo(() => validateInstanceInput(submitInput).length === 0, [submitInput]);
   const versionOptions = (versions.length ? versions : [{ id: form.minecraftVersion, type: "release" as const }]).map((version) => ({
     value: version.id,
     label: version.id,
-    description: version.type
+    description: ui(version.type)
   }));
   const loaderVersionOptions = loaderVersions.map((loaderVersion) => ({
     value: loaderVersion.id,
     label: loaderVersion.id,
-    description: loaderVersion.stable ? "Stable" : "Experimental"
+    description: ui(loaderVersion.stable ? "Stable" : "Experimental")
   }));
 
   const updateField = <K extends keyof CreateInstanceInput>(field: K, value: CreateInstanceInput[K]) => {
     setForm((current) => ({ ...current, [field]: value }));
   };
 
-  const handleSubmit = (event: FormEvent) => {
+  const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    if (saving) return;
     const validationErrors = validateInstanceInput(submitInput);
     setErrors(validationErrors);
     if (validationErrors.length > 0) return;
-    if (editingInstance && onUpdate) onUpdate(editingInstance.id, submitInput);
-    else onCreate(submitInput);
-    onClose();
+    setSaving(true);
+    try {
+      if (editingInstance && onUpdate) await onUpdate(editingInstance.id, submitInput);
+      else await onCreate(submitInput);
+      onClose();
+    } catch (error) { setErrors([String(error)]); }
+    finally { setSaving(false); }
   };
 
   if (!open) return null;
 
   return createPortal(
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Create new instance">
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={ui(editingInstance ? ui("Edit instance") : ui("Create new instance"))}>
       <Card className="create-modal" tone="bright">
         <div className="modal-header">
           <div>
-            <span>New profile</span>
-            <h2>{editingInstance ? "Edit instance" : "New instance"}</h2>
+            <span>{ui("New profile")}</span>
+            <h2>{editingInstance ? ui("Edit instance") : ui("New instance")}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} type="button" aria-label="Close">
+          <button className="icon-button" onClick={onClose} type="button" aria-label={ui("Close")} disabled={saving}>
             <X size={18} />
           </button>
         </div>
         <form className="create-instance-form" onSubmit={handleSubmit}>
           <label>
-            Instance name
-            <input value={form.name} onChange={(event) => updateField("name", event.target.value)} />
+            {ui("Instance name")}<input value={form.name} onChange={(event) => updateField("name", event.target.value)} />
           </label>
           <div className="form-row">
             <label>
-              Minecraft version
-              <CustomSelect
+              {ui("Minecraft version")}<CustomSelect
                 value={form.minecraftVersion}
-                placeholder="Select Minecraft version"
+                placeholder={ui("Select Minecraft version")}
                 options={versionOptions}
                 onChange={(value) => updateField("minecraftVersion", value)}
               />
             </label>
             <label>
-              RAM
-              <input
+              {ui("RAM")}<input
                 min={1024}
                 step={512}
                 type="number"
@@ -219,61 +219,57 @@ export default function CreateInstanceModal({ editingInstance, open, settings, o
           </div>
           {form.loaderType !== "vanilla" ? (
             <label>
-              Modloader version
-              <CustomSelect
+              {ui("Modloader version")}<CustomSelect
                 disabled={loaderVersionsLoading || loaderVersions.length === 0}
                 value={form.loaderVersion}
-                placeholder={loaderVersionsLoading ? "Loading live versions..." : "Select loader version"}
+                placeholder={loaderVersionsLoading ? ui("Loading live versions...") : ui("Select loader version")}
                 options={loaderVersionOptions}
                 onChange={(value) => updateField("loaderVersion", value)}
               />
-              {loaderVersionsError ? <small>Live versions could not be loaded. Using fallback data if available.</small> : null}
+              {loaderVersionsError ? <small>{ui("Live versions could not be loaded. Using fallback data if available.")}</small> : null}
             </label>
           ) : null}
           <label>
-            Game Directory override
-            <input
-              placeholder={defaultProfileDirectory(form.name)}
+            {ui("Custom Game Directory")}<input
+              placeholder={settings.gameDirectory}
               value={form.gameDirectory}
               onChange={(event) => updateField("gameDirectory", event.target.value)}
             />
-            <small>Leave empty to use the default profile folder.</small>
+            <small>{ui("Leave empty to use the Game Directory from Settings.")}</small>
           </label>
+          <details className="advanced-settings"><summary>{ui("Advanced Java configuration")}</summary>
           <label>
-            Java path override
-            <input
-              placeholder="Automatically uses Java 8, 17, 21, or 25 from Settings"
+            {ui("Custom Java path")}<input
+              placeholder={ui("Automatically installs the matching Java version")}
               value={form.javaPath}
               onChange={(event) => updateField("javaPath", event.target.value)}
             />
-            <small>Leave empty to let the launcher choose the Java path from the Minecraft version.</small>
+            <small>{ui("Leave empty to let the launcher choose the Java path from the Minecraft version.")}</small>
           </label>
           <label>
-            JVM arguments
-            <textarea rows={3} value={form.jvmArgs} onChange={(event) => updateField("jvmArgs", event.target.value)} />
+            {ui("JVM arguments")}<textarea rows={3} value={form.jvmArgs} onChange={(event) => updateField("jvmArgs", event.target.value)} />
           </label>
+          </details>
           <label>
-            Notes
-            <textarea rows={2} value={form.notes} onChange={(event) => updateField("notes", event.target.value)} />
+            {ui("Notes")}<textarea rows={2} value={form.notes} onChange={(event) => updateField("notes", event.target.value)} />
           </label>
           {editingInstance ? (
             <div className="image-picker-launch-row">
-              <span>Instance image</span>
+              <span>{ui("Instance image")}</span>
               <Button icon={<ImagePlus size={16} />} variant="secondary" type="button" onClick={() => setImagePickerOpen(true)}>
-                Choose instance image
-              </Button>
+                {ui("Choose instance image")}</Button>
             </div>
           ) : null}
           {errors.length > 0 ? (
             <div className="error-panel">
               {errors.map((error) => (
-                <span key={error}>{error}</span>
+                <span key={error}><LocalizedError message={error} /></span>
               ))}
             </div>
           ) : null}
           <div className="form-footer">
-            <span>{canSubmit ? "Ready to create local instance profile." : "Fill in the required fields."}</span>
-            <Button type="submit">{editingInstance ? "Save instance" : "Create instance"}</Button>
+            <span>{canSubmit ? ui("Ready to create local instance profile.") : ui("Fill in the required fields.")}</span>
+            <Button type="submit" disabled={saving}>{saving ? ui("Saving…") : editingInstance ? ui("Save instance") : ui("Create instance")}</Button>
           </div>
         </form>
       </Card>

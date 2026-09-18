@@ -1,3 +1,5 @@
+import LocalizedError from "./LocalizedError";
+import { useUiText } from "../uiLanguage";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, Link2, X } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -18,6 +20,7 @@ interface InstanceImagePickerModalProps {
 }
 
 export default function InstanceImagePickerModal({ instance, open, currentIcon, onClose, onSelect }: InstanceImagePickerModalProps) {
+  const ui = useUiText();
   const [url, setUrl] = useState("");
   const [mods, setMods] = useState<ModFile[]>([]);
   const [modsLoading, setModsLoading] = useState(false);
@@ -66,7 +69,7 @@ export default function InstanceImagePickerModal({ instance, open, currentIcon, 
   const chooseFile = async () => {
     const selected = await openDialog({
       multiple: false,
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }]
+      filters: [{ name: ui("Images"), extensions: ["png", "jpg", "jpeg", "webp", "gif"] }]
     });
     if (typeof selected !== "string") return;
     try {
@@ -79,51 +82,48 @@ export default function InstanceImagePickerModal({ instance, open, currentIcon, 
   };
 
   return createPortal(
-    <div className="modal-backdrop modal-backdrop-subwindow" role="dialog" aria-modal="true" aria-label="Choose instance image">
+    <div className="modal-backdrop modal-backdrop-subwindow" role="dialog" aria-modal="true" aria-label={ui("Choose instance image")}>
       <Card className="image-picker-modal" tone="bright">
         <div className="modal-header">
           <div>
-            <span>Instance image</span>
-            <h2>Choose instance image</h2>
+            <span>{ui("Instance image")}</span>
+            <h2>{ui("Choose instance image")}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} type="button" aria-label="Close">
+          <button className="icon-button" onClick={onClose} type="button" aria-label={ui("Close")}>
             <X size={18} />
           </button>
         </div>
 
         <div className="image-picker-preview">
-          {currentSrc ? <img src={currentSrc} alt="Current instance icon" /> : <div style={{ background: currentIcon || "#64748b" }} />}
-          <span>Current image</span>
+          {currentSrc ? <img src={currentSrc} alt={ui("Current instance icon")} /> : <div style={{ background: currentIcon || "#64748b" }} />}
+          <span>{ui("Current image")}</span>
         </div>
 
         <div className="image-picker-section">
           <label>
-            From URL
-            <div className="inline-input-action">
+            {ui("From URL")}<div className="inline-input-action">
               <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/icon.png" />
               <Button icon={<Link2 size={16} />} type="button" onClick={applyUrl}>
-                Use URL
-              </Button>
+                {ui("Use URL")}</Button>
             </div>
           </label>
         </div>
 
         <div className="image-picker-section">
-          <span>From File</span>
+          <span>{ui("From File")}</span>
           <Button icon={<FolderOpen size={16} />} variant="secondary" type="button" onClick={chooseFile}>
-            Choose local image
-          </Button>
+            {ui("Choose local image")}</Button>
         </div>
 
         {instance?.loaderType !== "vanilla" ? (
           <div className="image-picker-section">
-            <span>From Mods</span>
-            {modsLoading ? <p>Loading mod images...</p> : null}
-            {!modsLoading && mods.length === 0 ? <p>No mod images found.</p> : null}
+            <span>{ui("From Mods")}</span>
+            {modsLoading ? <p>{ui("Loading mod images...")}</p> : null}
+            {!modsLoading && mods.length === 0 ? <p>{ui("No mod images found.")}</p> : null}
             <div className="mod-image-grid">
               {mods.map((mod) => (
                 <button key={mod.path} type="button" onClick={() => mod.iconDataUrl && (onSelect(mod.iconDataUrl), onClose())}>
-                  {mod.iconDataUrl ? <img src={mod.iconDataUrl} alt={`${mod.name} icon`} /> : null}
+                  {mod.iconDataUrl ? <img src={mod.iconDataUrl} alt={ui("{name} icon", {name: mod.name})} /> : null}
                   <span>{mod.name}</span>
                 </button>
               ))}
@@ -131,7 +131,7 @@ export default function InstanceImagePickerModal({ instance, open, currentIcon, 
           </div>
         ) : null}
 
-        {error ? <div className="error-panel">{error}</div> : null}
+        {error ? <div className="error-panel"><LocalizedError message={error} /></div> : null}
       </Card>
     </div>,
     document.body

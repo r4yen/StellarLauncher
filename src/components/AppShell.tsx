@@ -7,6 +7,7 @@ import Sidebar from "./Sidebar";
 import TitleBar from "./TitleBar";
 
 interface AppShellProps {
+  setupMode?: boolean;
   activePage: PageKey;
   children: ReactNode;
   downloadsOpen: boolean;
@@ -14,12 +15,16 @@ interface AppShellProps {
   settings: LauncherSettings;
   totalPlaytimeSeconds: number;
   onDismissDownloadTask: (taskId: string) => void;
+  onCancelDownloadTask: (taskId:string)=>void;
+  onRetryDownloadTask: (taskId:string)=>void;
+  canRetryDownload:(task:DownloadTask)=>boolean;
   onSettingsChange: (settings: LauncherSettings) => void;
   onToggleDownloads: () => void;
   onNavigate: (page: PageKey) => void;
 }
 
 export default function AppShell({
+  setupMode = false,
   activePage,
   children,
   downloadsOpen,
@@ -27,6 +32,7 @@ export default function AppShell({
   settings,
   totalPlaytimeSeconds,
   onDismissDownloadTask,
+  onCancelDownloadTask,onRetryDownloadTask,canRetryDownload,
   onSettingsChange,
   onToggleDownloads,
   onNavigate
@@ -68,9 +74,9 @@ export default function AppShell({
         onLanguageOpenChange={setLanguageMenuOpen}
         onSettingsChange={onSettingsChange}
       />
-      <DownloadStatusPanel panelOnly open={downloadsOpen} tasks={downloadTasks} onDismissTask={onDismissDownloadTask} onToggleOpen={toggleDownloads} />
-      <div className="app-shell">
-        <Sidebar activePage={activePage} language={settings.language} totalPlaytimeSeconds={totalPlaytimeSeconds} onNavigate={onNavigate} />
+      <DownloadStatusPanel language={settings.language} onCancelTask={onCancelDownloadTask} onRetryTask={onRetryDownloadTask} canRetry={canRetryDownload} panelOnly open={downloadsOpen} tasks={downloadTasks} onDismissTask={onDismissDownloadTask} onToggleOpen={toggleDownloads} />
+      <div className={setupMode ? "app-shell setup-shell" : "app-shell"}>
+        {!setupMode && <Sidebar activePage={activePage} language={settings.language} totalPlaytimeSeconds={totalPlaytimeSeconds} onNavigate={onNavigate} />}
         <main className="main-content">{children}</main>
       </div>
     </div>

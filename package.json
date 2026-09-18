@@ -1,9 +1,12 @@
 {
   "name": "stellarlauncher",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "scripts": {
+    "setup:updater": "node scripts/setup-updater.mjs",
+    "test:updater": "node --test scripts/test-auto-updater.mjs",
+    "test:localization": "node --test scripts/test-localization.mjs",
     "dev": "vite",
     "build:frontend": "tsc && vite build",
     "build": "node scripts/build-desktop.mjs",
@@ -15,6 +18,8 @@
   "dependencies": {
     "@tauri-apps/api": "^2.5.0",
     "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.11.0",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

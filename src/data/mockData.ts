@@ -42,11 +42,15 @@ export const defaultLauncherSettings: LauncherSettings = {
   launcherFolder: defaultPaths.launcherFolder,
   minecraftStorageDirectory: defaultPaths.minecraftStorageDirectory,
   language: "en",
-  discordRichPresenceEnabled: true
+  discordRichPresenceEnabled: true,
+  autoUpdateEnabled: true,
+  initialSetupCompleted: false,
+  openDownloadsAutomatically: true,
+  autoBackupBeforeChanges: true
 };
 
 export const defaultLauncherStatus: LauncherStatusSummary = {
-  version: "1.0.3",
+  version: "1.0.4",
   javaDetected: true,
   storageReady: true,
   lastSync: "Local mock mode"

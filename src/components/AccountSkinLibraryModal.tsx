@@ -1,3 +1,4 @@
+import { useUiText } from "../uiLanguage";
 import { X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { Account } from "../models/account";
@@ -30,6 +31,7 @@ export default function AccountSkinLibraryModal({
   onRenameSkin,
   onToggleSkinFavorite
 }: AccountSkinLibraryModalProps) {
+  const ui = useUiText();
   if (!open || !account) return null;
 
   const selectedSkinId =
@@ -39,17 +41,17 @@ export default function AccountSkinLibraryModal({
   const avatarUrl = minecraftHeadUrl(account);
 
   return createPortal(
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={`${account.username} skin library`}>
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={ui("{name} skin library", {name: account.username})}>
       <div className="account-skin-modal">
         <div className="modal-header">
           <div className="account-skin-modal-title">
-            {avatarUrl ? <img src={avatarUrl} alt={`${account.username} skin head`} /> : null}
+            {avatarUrl ? <img src={avatarUrl} alt={ui("{name} skin head", {name: account.username})} /> : null}
             <div>
               <span>Skin</span>
               <h2>{account.username}</h2>
             </div>
           </div>
-          <button className="icon-button" type="button" aria-label="Close skin library" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label={ui("Close skin library")} onClick={onClose}>
             <X size={18} />
           </button>
         </div>

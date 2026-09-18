@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { Account } from "../models/account";
 import { Instance, RunningInstance } from "../models/instance";
 import { LauncherSettings, ThemeSettings } from "../models/settings";
@@ -60,15 +60,23 @@ export async function loadInstances(fallback: Instance[]): Promise<Instance[]> {
 }
 
 export async function saveInstances(instances: Instance[]): Promise<Instance[]> {
+  if (isTauri()) return invoke<Instance[]>("save_instances", { instances });
   return invokeOrFallback<Instance[]>("save_instances", { instances }, () => writeLocal("instances", instances));
 }
 
 export async function loadSettings(fallback: LauncherSettings): Promise<LauncherSettings> {
-  return invokeOrFallback<LauncherSettings>("load_settings", {}, () => readLocal("settings", fallback));
+  if (isTauri()) return invoke<LauncherSettings>("load_settings");
+  const existing = localStorage.getItem(`${fallbackPrefix}settings`);
+  return readLocal("settings", existing ? { ...fallback, initialSetupCompleted: true } : fallback);
 }
 
 export async function saveSettings(settings: LauncherSettings): Promise<LauncherSettings> {
+  if (isTauri()) return invoke<LauncherSettings>("save_settings", { settings });
   return invokeOrFallback<LauncherSettings>("save_settings", { settings }, () => writeLocal("settings", settings));
+}
+
+export async function renameGameDirectory(expectedDirectory: string, newName: string): Promise<{ settings: LauncherSettings; instances: Instance[] }> {
+  return invoke("rename_game_directory", { expectedDirectory, newName });
 }
 
 export async function loadTheme(fallback: ThemeSettings): Promise<ThemeSettings> {

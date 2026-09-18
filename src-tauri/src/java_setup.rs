@@ -11,10 +11,18 @@ use tauri::{AppHandle, Emitter};
 use zip::ZipArchive;
 
 const ADOPTIUM_BINARY_BASE_URL: &str = "https://api.adoptium.net/v3/binary/latest";
+static JAVA_SETUP_LOCK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+struct SetupGuard;
+impl Drop for SetupGuard {
+    fn drop(&mut self) {
+        JAVA_SETUP_LOCK.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaSetupProgress {
+    pub operation_id: String,
     pub version: u8,
     pub status: String,
     pub downloaded_bytes: u64,
@@ -36,8 +44,42 @@ pub struct JavaSetupResult {
 pub async fn setup_adoptium_java(
     app: AppHandle,
     launcher_folder: String,
+    versions: Option<Vec<u8>>,
 ) -> Result<JavaSetupResult, String> {
+    crate::operations::run(
+        "java-setup".into(),
+        setup_java_inner(
+            app,
+            launcher_folder,
+            versions.unwrap_or_else(|| vec![21]),
+            "java-setup".into(),
+        ),
+    )
+    .await
+}
+
+async fn setup_java_inner(
+    app: AppHandle,
+    launcher_folder: String,
+    versions: Vec<u8>,
+    operation_id: String,
+) -> Result<JavaSetupResult, String> {
+    while JAVA_SETUP_LOCK
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        )
+        .is_err()
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let _guard = SetupGuard;
     let launcher_dir = expand_path(&launcher_folder);
+    if !launcher_dir.is_absolute() {
+        return Err("Launcher folder must be an absolute path.".into());
+    }
     let java_root = launcher_dir.join("java");
     fs::create_dir_all(&java_root).map_err(|error| {
         format!(
@@ -46,18 +88,130 @@ pub async fn setup_adoptium_java(
         )
     })?;
 
-    let client = Client::new();
-    let java_8_path = install_temurin_jdk(&app, &client, &java_root, 8).await?;
-    let java_17_path = install_temurin_jdk(&app, &client, &java_root, 17).await?;
-    let java_21_path = install_temurin_jdk(&app, &client, &java_root, 21).await?;
-    let java_25_path = install_temurin_jdk(&app, &client, &java_root, 25).await?;
+    let java_root = fs::canonicalize(java_root).map_err(|error| error.to_string())?;
+    let client = Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .read_timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let settings = crate::storage::load_settings(app.clone())?;
+    let mut result = JavaSetupResult {
+        java_8_path: settings.java_8_path,
+        java_17_path: settings.java_17_path,
+        java_21_path: settings.java_21_path,
+        java_25_path: settings.java_25_path,
+    };
+    for version in versions {
+        if ![8, 16, 17, 21, 25].contains(&version) {
+            return Err(format!("Unsupported Java version: {version}"));
+        }
+        let path = install_temurin_jdk(&app, &client, &java_root, version, &operation_id).await?;
+        match version {
+            8 => result.java_8_path = path,
+            17 => result.java_17_path = path,
+            21 => result.java_21_path = path,
+            25 => result.java_25_path = path,
+            _ => {}
+        }
+    }
+    Ok(result)
+}
 
-    Ok(JavaSetupResult {
-        java_8_path,
-        java_17_path,
-        java_21_path,
-        java_25_path,
+fn release_java_version(version: &str) -> Option<u8> {
+    let parts: Option<Vec<u32>> = version.split('.').map(|part| part.parse().ok()).collect();
+    let parts = parts?;
+    let major = *parts.first()?;
+    if major >= 26 {
+        Some(25)
+    } else if major == 1 {
+        let minor = *parts.get(1)?;
+        Some(
+            if minor > 20 || (minor == 20 && parts.get(2).copied().unwrap_or(0) >= 5) {
+                21
+            } else if minor >= 18 {
+                17
+            } else if minor == 17 {
+                16
+            } else {
+                8
+            },
+        )
+    } else {
+        None
+    }
+}
+
+#[tauri::command]
+pub async fn ensure_instance_java(
+    app: AppHandle,
+    instance: crate::storage::Instance,
+) -> Result<String, String> {
+    crate::operations::run(format!("java-{}", instance.id), async {
+        let settings = crate::storage::load_settings(app.clone())?;
+        if !instance.java_path.trim().is_empty() {
+            let custom = crate::storage::expand_path(&instance.java_path)?;
+            if custom.is_file() {
+                return Ok(custom.to_string_lossy().into_owned());
+            }
+        }
+        let version = if let Some(version) = release_java_version(&instance.minecraft_version) {
+            version
+        } else {
+            let client = Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .map_err(|e| e.to_string())?;
+            let manifest: serde_json::Value = client
+                .get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
+                .send()
+                .await
+                .map_err(|e| e.to_string())?
+                .error_for_status()
+                .map_err(|e| e.to_string())?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+            let url = manifest["versions"]
+                .as_array()
+                .and_then(|items| {
+                    items
+                        .iter()
+                        .find(|item| item["id"].as_str() == Some(&instance.minecraft_version))
+                })
+                .and_then(|item| item["url"].as_str())
+                .ok_or("Minecraft version was not found.")?;
+            let metadata: serde_json::Value = client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?
+                .error_for_status()
+                .map_err(|e| e.to_string())?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+            metadata["javaVersion"]["majorVersion"]
+                .as_u64()
+                .unwrap_or(8)
+                .try_into()
+                .map_err(|_| "Invalid Java version")?
+        };
+        setup_java_inner(
+            app,
+            settings.launcher_folder.clone(),
+            vec![version],
+            format!("java-{}", instance.id),
+        )
+        .await?;
+        Ok(expand_path(&settings.launcher_folder)
+            .join("java")
+            .join(format!("jdk-{version}"))
+            .join("bin")
+            .join(java_binary_name())
+            .to_string_lossy()
+            .into_owned())
     })
+    .await
 }
 
 async fn install_temurin_jdk(
@@ -65,8 +219,23 @@ async fn install_temurin_jdk(
     client: &Client,
     java_root: &Path,
     version: u8,
+    operation_id: &str,
 ) -> Result<String, String> {
     let target_dir = java_root.join(format!("jdk-{version}"));
+    let installed_java = target_dir.join("bin").join(java_binary_name());
+    if reusable_installation(&target_dir, version) {
+        emit_progress(
+            app,
+            operation_id,
+            version,
+            "completed",
+            1,
+            Some(1),
+            &installed_java,
+            "Using installed Eclipse Temurin JDK",
+        );
+        return Ok(installed_java.to_string_lossy().into_owned());
+    }
     let archive_path = java_root.join(format!(
         "temurin-jdk-{version}.{}",
         java_archive_extension()
@@ -75,6 +244,7 @@ async fn install_temurin_jdk(
 
     emit_progress(
         app,
+        operation_id,
         version,
         "pending",
         0,
@@ -92,7 +262,7 @@ async fn install_temurin_jdk(
         })?;
     }
     if extract_dir.exists() {
-        fs::remove_dir_all(&extract_dir).map_err(|error| {
+        remove_java_directory(java_root, &extract_dir).map_err(|error| {
             format!(
                 "Cannot remove old extraction directory {}: {error}",
                 extract_dir.display()
@@ -126,6 +296,7 @@ async fn install_temurin_jdk(
         downloaded_bytes += bytes.len() as u64;
         emit_progress(
             app,
+            operation_id,
             version,
             "downloading",
             downloaded_bytes,
@@ -137,6 +308,7 @@ async fn install_temurin_jdk(
 
     emit_progress(
         app,
+        operation_id,
         version,
         "extracting",
         downloaded_bytes,
@@ -159,7 +331,7 @@ async fn install_temurin_jdk(
         .to_path_buf();
 
     if target_dir.exists() {
-        fs::remove_dir_all(&target_dir).map_err(|error| {
+        remove_java_directory(java_root, &target_dir).map_err(|error| {
             format!(
                 "Cannot replace old Java directory {}: {error}",
                 target_dir.display()
@@ -170,7 +342,7 @@ async fn install_temurin_jdk(
         .map_err(|error| format!("Cannot move JDK into {}: {error}", target_dir.display()))?;
 
     if extract_dir.exists() {
-        fs::remove_dir_all(&extract_dir).map_err(|error| {
+        remove_java_directory(java_root, &extract_dir).map_err(|error| {
             format!(
                 "Cannot clean extraction directory {}: {error}",
                 extract_dir.display()
@@ -180,8 +352,11 @@ async fn install_temurin_jdk(
     let _ = fs::remove_file(&archive_path);
 
     let final_java = target_dir.join("bin").join(java_binary_name());
+    fs::write(target_dir.join(".stellar-installed"), version.to_string())
+        .map_err(|error| format!("Cannot record Java installation: {error}"))?;
     emit_progress(
         app,
+        operation_id,
         version,
         "completed",
         downloaded_bytes,
@@ -197,6 +372,71 @@ fn adoptium_os_segment() -> &'static str {
         "linux"
     } else {
         "windows"
+    }
+}
+
+fn reusable_installation(directory: &Path, version: u8) -> bool {
+    fs::read_to_string(directory.join(".stellar-installed"))
+        .ok()
+        .as_deref()
+        == Some(&version.to_string())
+        && directory
+            .join("bin")
+            .join(java_binary_name())
+            .metadata()
+            .is_ok_and(|m| m.is_file() && m.len() > 0)
+}
+
+fn remove_java_directory(root: &Path, directory: &Path) -> Result<(), String> {
+    let root = fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let target = fs::canonicalize(directory).map_err(|e| e.to_string())?;
+    if target.parent() != Some(root.as_path())
+        || directory
+            .file_name()
+            .map_or(true, |name| target != root.join(name))
+    {
+        return Err("Java cleanup target is outside the managed Java folder.".into());
+    }
+    fs::remove_dir_all(target).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod setup_tests {
+    use super::*;
+    #[test]
+    fn chooses_java_for_minecraft_releases_and_defers_snapshots_to_metadata() {
+        for (version, java) in [
+            ("1.16.5", 8),
+            ("1.17.1", 16),
+            ("1.18.2", 17),
+            ("1.20.4", 17),
+            ("1.20.5", 21),
+            ("1.21.5", 21),
+            ("26.1", 25),
+        ] {
+            assert_eq!(release_java_version(version), Some(java));
+        }
+        assert_eq!(release_java_version("25w14a"), None);
+    }
+    #[test]
+    fn only_completed_nonempty_java_installations_are_reused() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("bin")).unwrap();
+        fs::write(temp.path().join("bin").join(java_binary_name()), b"java").unwrap();
+        assert!(!reusable_installation(temp.path(), 21));
+        fs::write(temp.path().join(".stellar-installed"), "21").unwrap();
+        assert!(reusable_installation(temp.path(), 21));
+        assert!(!reusable_installation(temp.path(), 17));
+        fs::write(temp.path().join("bin").join(java_binary_name()), b"").unwrap();
+        assert!(!reusable_installation(temp.path(), 21));
+    }
+    #[test]
+    fn cleanup_rejects_directories_outside_managed_java_root() {
+        let managed = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        assert!(remove_java_directory(managed.path(), other.path()).is_err());
+        assert!(other.path().exists());
+        assert!(remove_java_directory(managed.path(), managed.path()).is_err());
     }
 }
 
@@ -322,6 +562,7 @@ fn expand_path(path: &str) -> PathBuf {
 
 fn emit_progress(
     app: &AppHandle,
+    operation_id: &str,
     version: u8,
     status: &str,
     downloaded_bytes: u64,
@@ -332,6 +573,7 @@ fn emit_progress(
     let _ = app.emit(
         "java-setup-progress",
         JavaSetupProgress {
+            operation_id: operation_id.to_owned(),
             version,
             status: status.to_string(),
             downloaded_bytes,

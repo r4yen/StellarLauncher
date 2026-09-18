@@ -1,3 +1,4 @@
+import { useUiText } from "../uiLanguage";
 import { ExternalLink, Github, Home, MessageCircle, MonitorCog, Palette, Server, Users } from "lucide-react";
 import { t, Language } from "../i18n";
 import { PageKey } from "../models/launcher";
@@ -21,6 +22,7 @@ const navItems: Array<{ key: PageKey; labelKey: "home" | "instances" | "accounts
 ];
 
 export default function Sidebar({ activePage, language, totalPlaytimeSeconds, onNavigate }: SidebarProps) {
+  const ui = useUiText();
   return (
     <aside className="sidebar">
       <Logo size="sm" />
@@ -55,9 +57,9 @@ export default function Sidebar({ activePage, language, totalPlaytimeSeconds, on
         </div>
         <div className="sidebar-version">
           <span>{t(language, "localMode")}</span>
-          <strong>v1.0.3</strong>
-          <span>Total Playtime</span>
-          <strong>{formatCompactPlaytime(totalPlaytimeSeconds)}</strong>
+          <strong>v1.0.4</strong>
+          <span>{ui("Total Playtime")}</span>
+          <strong>{formatCompactPlaytime(totalPlaytimeSeconds, language)}</strong>
         </div>
       </div>
     </aside>

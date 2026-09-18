@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { trackedInvoke } from "./downloadOperations";
 import { Instance } from "../models/instance";
 import { ModFile } from "../models/mod";
 
@@ -28,5 +29,5 @@ export interface ModDownloadProgress {
 }
 
 export async function installModrinthMod(gameDirectory: string, downloadUrl: string, fileName: string, replacePath?: string, operationId?: string): Promise<ModFile> {
-  return invoke<ModFile>("install_modrinth_mod", { gameDirectory, downloadUrl, fileName, replacePath, operationId });
+  return operationId ? trackedInvoke<ModFile>(operationId,"install_modrinth_mod", { gameDirectory, downloadUrl, fileName, replacePath, operationId }) : invoke<ModFile>("install_modrinth_mod", { gameDirectory, downloadUrl, fileName, replacePath, operationId });
 }

@@ -1,3 +1,4 @@
+import { useUiText } from "../uiLanguage";
 import { useEffect, useState } from "react";
 import ColorPicker from "../components/ColorPicker";
 import { ThemeSettings } from "../models/settings";
@@ -25,6 +26,7 @@ function rgbToHex(r: number, g: number, b: number) {
 }
 
 export default function ThemeEditorPage({ theme, onThemeChange }: ThemeEditorPageProps) {
+  const ui = useUiText();
   const [hexDraft, setHexDraft] = useState(theme.accentColor);
   const updateTheme = (patch: Partial<ThemeSettings>) => onThemeChange({ ...theme, ...patch });
   const rgb = hexToRgb(theme.accentColor);
@@ -58,20 +60,18 @@ export default function ThemeEditorPage({ theme, onThemeChange }: ThemeEditorPag
     <div className="page-stack">
       <div className="page-header">
         <div>
-          <span>Appearance</span>
-          <h1>Theme Editor</h1>
-          <p>Dark mode is the default surface. Pick an exact accent color, enter a HEX code or tune RGB channels.</p>
+          <span>{ui("Appearance")}</span>
+          <h1>{ui("Theme Editor")}</h1>
+          <p>{ui("Dark mode is the default surface. Pick an exact accent color, enter a HEX code or tune RGB channels.")}</p>
         </div>
       </div>
       <section className="content-grid">
         <Card className="theme-controls">
           <label>
-            Accent color
-            <ColorPicker color={theme.accentColor} onChange={(accentColor) => updateTheme({ accentColor })} />
+            {ui("Accent color")}<ColorPicker color={theme.accentColor} onChange={(accentColor) => updateTheme({ accentColor })} />
           </label>
           <label>
-            Custom HEX code
-            <input
+            {ui("Custom HEX code")}<input
               className="hex-input"
               maxLength={7}
               value={hexDraft}

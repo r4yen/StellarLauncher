@@ -2,7 +2,12 @@ mod auth;
 mod discord_rpc;
 mod instances;
 mod java_setup;
+mod game_directory;
 mod mods;
+mod mrpack;
+mod launcher_import;
+mod operations;
+mod backups;
 mod storage;
 
 use serde::Serialize;
@@ -35,6 +40,8 @@ fn get_launcher_status() -> LauncherStatus {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(auth::AuthState::default())
         .manage(discord_rpc::DiscordRpcState::default())
         .invoke_handler(tauri::generate_handler![
@@ -48,6 +55,15 @@ pub fn run() {
             instances::is_minecraft_process_running,
             instances::read_launch_log_tail,
             java_setup::setup_adoptium_java,
+            java_setup::ensure_instance_java,
+            operations::cancel_operation,
+            backups::create_instance_backup,
+            backups::list_instance_backups,
+            backups::restore_instance_backup,
+            backups::duplicate_instance,
+            launcher_import::scan_launcher_instances,
+            launcher_import::import_launcher_instances,
+            launcher_import::prepare_setup_directories,
             mods::list_mods,
             mods::set_mod_enabled,
             mods::delete_mod,
@@ -61,13 +77,16 @@ pub fn run() {
             storage::save_instances,
             storage::load_settings,
             storage::save_settings,
+            game_directory::rename_game_directory,
             storage::load_theme,
             storage::save_theme,
             storage::load_minecraft_cache,
             storage::save_minecraft_cache,
             storage::copy_instance_icon,
-            storage::read_stellar_instance_file,
-            storage::write_stellar_instance_file,
+            mrpack::inspect_mrpack,
+            mrpack::import_mrpack,
+            mrpack::list_mrpack_export_entries,
+            mrpack::export_mrpack,
             auth::begin_ms_device_login,
             auth::poll_ms_device_login,
             auth::refresh_minecraft_account,

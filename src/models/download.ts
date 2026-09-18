@@ -1,7 +1,8 @@
-export type DownloadTaskStatus = "pending" | "downloading" | "completed" | "error";
+export type DownloadTaskStatus = "pending" | "downloading" | "completed" | "error" | "cancelled";
 
 export interface DownloadTask {
   id: string;
+  cancelOperationId?: string;
   instanceId: string;
   instanceName: string;
   label: string;

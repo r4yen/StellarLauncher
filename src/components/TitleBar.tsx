@@ -1,3 +1,4 @@
+import { useUiText } from "../uiLanguage";
 import { Download, Globe2, Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LauncherSettings } from "../models/settings";
@@ -25,6 +26,7 @@ export default function TitleBar({
   onLanguageOpenChange,
   onSettingsChange
 }: TitleBarProps) {
+  const ui = useUiText();
   return (
     <header className="titlebar" data-tauri-drag-region>
       <div className="titlebar-brand" data-tauri-drag-region>
@@ -49,7 +51,7 @@ export default function TitleBar({
           triggerClassName={languageOpen ? "titlebar-download titlebar-download-active titlebar-language-button" : "titlebar-download titlebar-language-button"}
           triggerIcon={<Globe2 size={17} />}
           value={settings.language}
-          placeholder="Language"
+          placeholder={ui("Language")}
           options={[
             { value: "en", label: "\u{1F1EC}\u{1F1E7} English", description: "English" },
             { value: "de", label: "\u{1F1E9}\u{1F1EA} Deutsch", description: "Deutsch" }
@@ -59,13 +61,13 @@ export default function TitleBar({
         />
       </div>
       <div className="titlebar-controls">
-        <button type="button" aria-label="Minimize" onClick={() => appWindow.minimize()}>
+        <button type="button" aria-label={ui("Minimize")} onClick={() => appWindow.minimize()}>
           <Minus size={15} />
         </button>
-        <button type="button" aria-label="Maximize" onClick={() => appWindow.toggleMaximize()}>
+        <button type="button" aria-label={ui("Maximize")} onClick={() => appWindow.toggleMaximize()}>
           <Square size={13} />
         </button>
-        <button type="button" aria-label="Close" className="titlebar-close" onClick={() => appWindow.close()}>
+        <button type="button" aria-label={ui("Close")} className="titlebar-close" onClick={() => appWindow.close()}>
           <X size={16} />
         </button>
       </div>

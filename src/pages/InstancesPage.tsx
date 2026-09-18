@@ -1,3 +1,4 @@
+import { useUiText } from "../uiLanguage";
 import { Plus } from "lucide-react";
 import InstanceCard from "../components/InstanceCard";
 import Button from "../components/ui/Button";
@@ -10,15 +11,16 @@ interface InstancesPageProps {
 }
 
 export default function InstancesPage({ instances, launchStatus, onLaunch }: InstancesPageProps) {
+  const ui = useUiText();
   return (
     <div className="page-stack">
       <div className="page-header">
         <div>
-          <span>Profiles</span>
-          <h1>Instances</h1>
-          <p>Mock profiles are wired to launch state handling and ready for real filesystem-backed management.</p>
+          <span>{ui("Profiles")}</span>
+          <h1>{ui("Instances")}</h1>
+          <p>{ui("Mock profiles are wired to launch state handling and ready for real filesystem-backed management.")}</p>
         </div>
-        <Button icon={<Plus size={17} />}>New instance</Button>
+        <Button icon={<Plus size={17} />}>{ui("New instance")}</Button>
       </div>
       <div className="instances-list">
         {instances.map((instance) => (

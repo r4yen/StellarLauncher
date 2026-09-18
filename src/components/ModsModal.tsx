@@ -1,3 +1,5 @@
+import LocalizedError from "./LocalizedError";
+import { useUiText, useUiLanguage } from "../uiLanguage";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ChevronLeft, ChevronRight, Download, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -33,6 +35,8 @@ export default function ModsModal({
   onSetCachedMods,
   onRefreshModrinthMods
 }: ModsModalProps) {
+  const ui = useUiText();
+  const language = useUiLanguage();
   const [mods, setMods] = useState<ModFile[]>([]);
   const [query, setQuery] = useState("");
   const [modrinthOpen, setModrinthOpen] = useState(false);
@@ -145,8 +149,8 @@ export default function ModsModal({
     try {
       const selected = await openDialog({
         multiple: false,
-        title: "Select mod file",
-        filters: [{ name: "Minecraft Mod", extensions: ["jar", "disabled"] }]
+        title: ui("Select mod file"),
+        filters: [{ name: ui("Minecraft Mod"), extensions: ["jar", "disabled"] }]
       });
 
       if (!selected || Array.isArray(selected)) return;
@@ -302,36 +306,34 @@ export default function ModsModal({
               <span>Mods</span>
               <h2>{instance.name}</h2>
             </div>
-            <button className="icon-button" onClick={onClose} type="button" aria-label="Close">
+            <button className="icon-button" onClick={onClose} type="button" aria-label={ui("Close")}>
               <X size={18} />
             </button>
           </div>
           <div className="mods-toolbar">
             <label className="mods-search">
               <Search size={16} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search mods" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={ui("Search mods")} />
             </label>
             <Button icon={<Plus size={16} />} onClick={addMod} type="button">
-              Add
-            </Button>
+              {ui("Add")}</Button>
             <Button icon={<Plus size={16} />} onClick={() => setModrinthOpen((current) => !current)} type="button" variant={modrinthOpen ? "primary" : "secondary"}>
               Modrinth
             </Button>
           </div>
         </div>
-        {error ? <div className="error-panel">{error}</div> : null}
+        {error ? <div className="error-panel"><LocalizedError message={error} /></div> : null}
         <div className={modrinthOpen ? "mods-content mods-content-split" : "mods-content"}>
           <div className="mods-local-pane">
             <div className="mods-pane-header">
               <div>
-                <strong>Installed mods</strong>
-                <span>{filteredMods.length} shown</span>
+                <strong>{ui("Installed mods")}</strong>
+                <span>{filteredMods.length} {ui("shown")}</span>
               </div>
               <div className="mods-pane-actions">
                 <Button icon={<Download size={15} />} disabled={updatableMods.length === 0 || Boolean(busyModPath)} onClick={updateAllMods} type="button" variant={updatableMods.length > 0 ? "primary" : "secondary"}>
-                  Update all
-                </Button>
-                <button className="icon-button" disabled={localRefreshLoading} onClick={refreshModrinth} type="button" aria-label="Refresh Modrinth metadata" title="Refresh Modrinth metadata">
+                  {ui("Update all")}</Button>
+                <button className="icon-button" disabled={localRefreshLoading} onClick={refreshModrinth} type="button" aria-label={ui("Refresh Modrinth metadata")} title={ui("Refresh Modrinth metadata")}>
                   <RefreshCw size={16} />
                 </button>
               </div>
@@ -347,13 +349,13 @@ export default function ModsModal({
                   <div className="mod-main">
                     <strong>{mod.name}</strong>
                     <span>
-                      {mod.modrinth ? <img className="modrinth-mark" src={modrinthLogo} alt="Modrinth" title="Found on Modrinth" /> : null}
+                      {mod.modrinth ? <img className="modrinth-mark" src={modrinthLogo} alt="Modrinth" title={ui("Found on Modrinth")} /> : null}
                       {mod.fileName}
                     </span>
                   </div>
                   <div className="mod-meta">
-                    <strong>{mod.version}</strong>
-                    <span>{mod.authors.length ? mod.authors.join(", ") : "Unknown author"}</span>
+                    <strong>{mod.version === "unknown" ? ui("unknown") : mod.version}</strong>
+                    <span>{mod.authors.length ? mod.authors.join(", ") : ui("Unknown author")}</span>
                   </div>
                   {mod.modrinth ? (
                     <button
@@ -361,15 +363,15 @@ export default function ModsModal({
                       disabled={!mod.modrinth.updateAvailable || busyModPath === mod.path}
                       onClick={() => updateMod(mod)}
                       type="button"
-                      aria-label={mod.modrinth.updateAvailable ? "Update mod" : "No update available"}
-                      title={mod.modrinth.updateAvailable ? `Update from ${mod.version} to ${mod.modrinth.latestVersionName ?? "latest"}` : "No update available"}
+                      aria-label={mod.modrinth.updateAvailable ? ui("Update mod") : ui("No update available")}
+                      title={mod.modrinth.updateAvailable ? ui("Update from {from} to {to}", {from: mod.version, to: mod.modrinth.latestVersionName ?? "latest"}) : ui("No update available")}
                     >
                       <Download size={16} />
                     </button>
                   ) : (
                     <span />
                   )}
-                  <button className="icon-button" onClick={() => removeMod(mod)} type="button" aria-label="Delete mod">
+                  <button className="icon-button" onClick={() => removeMod(mod)} type="button" aria-label={ui("Delete mod")}>
                     <Trash2 size={16} />
                   </button>
                   <div className={modProgress[mod.path] ? "mod-row-progress mod-row-progress-active" : "mod-row-progress"}>
@@ -379,8 +381,8 @@ export default function ModsModal({
                 ))
               ) : (
                 <Card className="empty-state">
-                  <h3>{mods.length > 0 ? "No matching mods" : "No mods found"}</h3>
-                  <p>{mods.length > 0 ? "Try a different search term." : "Add .jar files to the mods folder for this instance."}</p>
+                  <h3>{mods.length > 0 ? ui("No matching mods") : ui("No mods found")}</h3>
+                  <p>{mods.length > 0 ? ui("Try a different search term.") : ui("Add .jar files to the mods folder for this instance.")}</p>
                 </Card>
               )}
             </div>
@@ -389,11 +391,11 @@ export default function ModsModal({
             <aside className="modrinth-browser">
               <label className="mods-search">
                 <Search size={16} />
-                <input value={modrinthQuery} onChange={(event) => setModrinthQuery(event.target.value)} placeholder="Search Modrinth" />
+                <input value={modrinthQuery} onChange={(event) => setModrinthQuery(event.target.value)} placeholder={ui("Search Modrinth")} />
               </label>
               <div className="modrinth-results">
-                {modrinthLoading ? <div className="download-empty">Searching Modrinth...</div> : null}
-                {!modrinthLoading && modrinthResults.length === 0 ? <div className="download-empty">No Modrinth results</div> : null}
+                {modrinthLoading ? <div className="download-empty">{ui("Searching Modrinth...")}</div> : null}
+                {!modrinthLoading && modrinthResults.length === 0 ? <div className="download-empty">{ui("No Modrinth results")}</div> : null}
                 {modrinthResults.map((result) => (
                   <article className="modrinth-result" key={result.projectId}>
                     <div className="mod-icon">
@@ -401,7 +403,7 @@ export default function ModsModal({
                     </div>
                     <div>
                       <strong>{result.title}</strong>
-                      <span>{result.author} - {result.downloads.toLocaleString()} downloads</span>
+                      <span>{result.author} - {result.downloads.toLocaleString(language)} {ui("downloads")}</span>
                       <p>{result.description}</p>
                     </div>
                     <Button
@@ -415,7 +417,7 @@ export default function ModsModal({
                       type="button"
                       variant={installedByProjectId.get(result.projectId)?.modrinth?.updateAvailable ? "primary" : "secondary"}
                     >
-                      {installedByProjectId.get(result.projectId)?.modrinth?.updateAvailable ? "Update" : installedByProjectId.get(result.projectId) ? "Installed" : "Install"}
+                      {installedByProjectId.get(result.projectId)?.modrinth?.updateAvailable ? ui("Update") : installedByProjectId.get(result.projectId) ? ui("Installed") : ui("Install")}
                     </Button>
                     <div className={modProgress[`project:${result.projectId}`] ? "mod-row-progress mod-row-progress-active modrinth-result-progress" : "mod-row-progress modrinth-result-progress"}>
                       <div style={{ width: `${modProgress[`project:${result.projectId}`]?.percent ?? 0}%` }} />
@@ -424,13 +426,13 @@ export default function ModsModal({
                 ))}
               </div>
               <div className="modrinth-pagination">
-                <button className="icon-button" disabled={modrinthOffset <= 0 || modrinthLoading} onClick={() => setModrinthOffset((current) => Math.max(0, current - modrinthPageSize))} type="button" aria-label="Previous Modrinth page">
+                <button className="icon-button" disabled={modrinthOffset <= 0 || modrinthLoading} onClick={() => setModrinthOffset((current) => Math.max(0, current - modrinthPageSize))} type="button" aria-label={ui("Previous Modrinth page")}>
                   <ChevronLeft size={16} />
                 </button>
                 <span>
-                  Page {modrinthPage} / {modrinthPageCount}
+                  {ui("Page")} {modrinthPage} / {modrinthPageCount}
                 </span>
-                <button className="icon-button" disabled={modrinthOffset + modrinthPageSize >= modrinthTotalHits || modrinthLoading} onClick={() => setModrinthOffset((current) => current + modrinthPageSize)} type="button" aria-label="Next Modrinth page">
+                <button className="icon-button" disabled={modrinthOffset + modrinthPageSize >= modrinthTotalHits || modrinthLoading} onClick={() => setModrinthOffset((current) => current + modrinthPageSize)} type="button" aria-label={ui("Next Modrinth page")}>
                   <ChevronRight size={16} />
                 </button>
               </div>

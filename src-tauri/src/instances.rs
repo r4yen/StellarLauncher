@@ -325,6 +325,10 @@ pub async fn ensure_minecraft_files(
     app: AppHandle,
     request: EnsureMinecraftFilesRequest,
 ) -> Result<EnsureMinecraftFilesResponse, String> {
+    crate::operations::run(format!("minecraft-{}", request.instance.id), ensure_minecraft_files_inner(app, request)).await
+}
+
+async fn ensure_minecraft_files_inner(app: AppHandle, request: EnsureMinecraftFilesRequest) -> Result<EnsureMinecraftFilesResponse, String> {
     let instance = request.instance;
     let storage_dir = expand_path(&request.minecraft_storage_directory)?;
     let game_dir = expand_path(&instance.game_directory)?;
@@ -697,7 +701,7 @@ fn start_minecraft_process_blocking(
         natives_dir.to_string_lossy().to_string(),
     );
     replacements.insert("launcher_name".to_string(), "Prism Launcher".to_string());
-    replacements.insert("launcher_version".to_string(), "1.0.3".to_string());
+    replacements.insert("launcher_version".to_string(), "1.0.4".to_string());
 
     let game_args = game_arguments(&version, parent_version.as_ref(), &replacements);
     let mut jvm_args = Vec::new();
