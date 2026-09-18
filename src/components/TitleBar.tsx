@@ -31,7 +31,7 @@ export default function TitleBar({
     <header className="titlebar" data-tauri-drag-region>
       <div className="titlebar-brand" data-tauri-drag-region>
         <Logo size="sm" showText={false} />
-        <span data-tauri-drag-region>Stellar Launcher</span>
+        <span data-tauri-drag-region>StellarLauncher</span>
       </div>
       <button
         className={downloadsOpen ? "titlebar-download titlebar-download-active" : "titlebar-download"}

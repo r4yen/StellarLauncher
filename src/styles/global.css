@@ -7,6 +7,33 @@
 }
 
 .settings-tabs { display:flex; flex-wrap:wrap; gap:8px; }
+.launcher-select { min-height:42px; padding:10px 34px 10px 12px; color:var(--text); background:var(--bg-soft); border:1px solid var(--line); border-radius:10px; color-scheme:dark; font:inherit; }
+.organized-library,.unfiled-list,.folder-contents { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.library-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.library-toolbar small,.unfiled-heading,.folder-empty { color:var(--muted); font-size:11px; }
+.organized-row { display:flex; align-items:center; gap:4px; min-width:0; border-top:2px solid transparent; }
+.organized-row > .instance-row { flex:1; min-width:0; }
+.drag-handle { display:flex; padding:6px 3px; background:none; border:0; color:var(--dim); cursor:grab; flex-shrink:0; }
+.drag-handle:hover { color:var(--accent); }
+.drag-handle:active { cursor:grabbing; }
+.drop-before { border-top-color:var(--accent); }
+.drop-target { outline:2px solid var(--accent); outline-offset:3px; border-radius:12px; }
+.library-folder { border:1px solid var(--line); background:var(--panel); border-radius:14px; min-width:0; }
+.library-folder > header { display:flex; align-items:center; gap:6px; padding:12px; }
+.folder-toggle { flex:1; display:flex; gap:12px; align-items:center; padding:6px; border:0; background:none; color:var(--text); text-align:left; cursor:pointer; min-width:0; }
+.folder-toggle strong { flex:1; overflow:hidden; text-overflow:ellipsis; }
+.folder-toggle span { color:var(--muted); font-size:11px; }
+.folder-chevron-open { transform:rotate(90deg); }
+.folder-contents { padding:0 12px 12px; }
+.folder-empty { padding:12px; margin:0; }
+.folder-editor { display:flex; gap:8px; align-items:center; }
+.folder-editor input { flex:1; min-width:0; }
+.account-row-avatar { display:grid; place-items:center; font-size:24px; font-weight:700; }
+.account-row-active { background:color-mix(in srgb,var(--accent) 6%,var(--panel)); }
+.account-row .instance-row-state { max-width:180px; }
+.select-folder-options { padding-left:16px; }
+.select-folder-heading { color:var(--muted); }
+.select-folder-heading strong { flex:1; }
 .localized-error { display:inline; overflow-wrap:anywhere; }
 .localized-error > .text-action { margin-left:8px; padding:2px 0; text-decoration:underline; }
 .localized-error > code { display:block; white-space:pre-wrap; overflow-wrap:anywhere; margin-top:8px; font-size:11px; }

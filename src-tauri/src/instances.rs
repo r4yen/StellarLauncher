@@ -2237,7 +2237,7 @@ fn write_launch_preamble(
     jvm_args: &[String],
     game_args: &[String],
 ) -> Result<(), String> {
-    writeln!(log, "Stellar Launcher Debug:")
+    writeln!(log, "StellarLauncher Debug:")
         .map_err(|error| format!("Cannot write launch log preamble: {error}"))?;
     for line in debug_lines {
         writeln!(log, "  {line}")

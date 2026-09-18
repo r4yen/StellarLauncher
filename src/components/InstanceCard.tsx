@@ -31,8 +31,6 @@ export default function InstanceCard({instance,launchStatus,language="en",update
       <button disabled={busy||running} onClick={action(()=>onDuplicate?.(instance))}><Copy size={15}/>{text("Duplicate","Duplizieren")}</button>
       <button disabled={busy||running} onClick={action(()=>onBackups?.(instance))}><ShieldCheck size={15}/>{text("Backups","Sicherungen")}</button>
       <button disabled={busy||running} onClick={action(()=>onExport?.(instance))}><FileUp size={15}/>{text("Export .mrpack",".mrpack exportieren")}</button>
-      <button disabled={!canMoveUp} onClick={action(()=>onMove?.(instance.id,-1))}><ArrowUp size={15}/>{text("Move up","Nach oben")}</button>
-      <button disabled={!canMoveDown} onClick={action(()=>onMove?.(instance.id,1))}><ArrowDown size={15}/>{text("Move down","Nach unten")}</button>
       <button disabled={busy||running} className="danger-text" onClick={action(()=>onDelete?.(instance.id))}><Trash2 size={15}/>{text("Remove profile","Profil entfernen")}</button>
     </div></details>
   </article>;

@@ -16,7 +16,7 @@ export default function LoadingScreen({ message, progress }: LoadingScreenProps)
       <div className="loading-card">
         <Logo size="lg" />
         <div className="loading-copy">
-          <h1>Stellar Launcher</h1>
+          <h1>StellarLauncher</h1>
           <p>{ui(message)}</p>
         </div>
         <div className="loading-progress-track" aria-label={ui("Loading progress")}>

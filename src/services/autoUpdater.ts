@@ -72,7 +72,7 @@ export class AutoUpdater {
         return;
       }
       if (!update) {
-        this.publish({ phase: "current", message: "Stellar Launcher is up to date." });
+        this.publish({ phase: "current", message: "StellarLauncher is up to date." });
         return;
       }
       this.pending = update;
@@ -102,7 +102,7 @@ export class AutoUpdater {
           progress: event.event === "Finished" ? 100 : total > 0 ? Math.min(100, downloaded / total * 100) : undefined
         });
       });
-      this.publish({ phase: "restarting", message: "Update installed. Restarting Stellar Launcher...", progress: 100 });
+      this.publish({ phase: "restarting", message: "Update installed. Restarting StellarLauncher...", progress: 100 });
       await this.dependencies.restart();
     } catch (error) {
       this.publish({ phase: "error", message: `Automatic update could not finish. ${String(error)}` });

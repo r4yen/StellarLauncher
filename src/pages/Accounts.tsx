@@ -1,4 +1,6 @@
 import LocalizedError from "../components/LocalizedError";
+import OrganizedList from "../components/OrganizedList";
+import { CollectionOrganization } from "../models/organization";
 import { useUiText } from "../uiLanguage";
 import { Check, ExternalLink, KeyRound, Loader2, Plus, ShieldCheck, Trash2, UserRound, UserRoundPlus, X } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -14,6 +16,8 @@ import { canMoveAccount } from "../services/accountService";
 import { minecraftHeadUrl } from "../services/avatarService";
 
 interface AccountsProps {
+  collection: CollectionOrganization;
+  onCollectionChange: (collection: CollectionOrganization) => void;
   onboarding?: boolean;
   accounts: Account[];
   skins: SkinLibraryItem[];
@@ -34,6 +38,7 @@ interface AccountsProps {
 }
 
 export default function Accounts({
+  collection, onCollectionChange,
   onboarding = false,
   accounts,
   skins,
@@ -53,6 +58,7 @@ export default function Accounts({
   onSelectAccount
 }: AccountsProps) {
   const ui = useUiText();
+  const [search,setSearch]=useState("");
   const [loginStart, setLoginStart] = useState<DeviceLoginStart | undefined>();
   const [loginError, setLoginError] = useState<string | undefined>();
   const [offlineFormOpen, setOfflineFormOpen] = useState(false);
@@ -212,9 +218,8 @@ export default function Accounts({
 
       {loginError || storageError ? <div className="error-panel"><LocalizedError message={loginError ?? storageError} /></div> : null}
 
-      <div className="accounts-grid">
-        {accounts.length > 0 ? (
-          accounts.map((account) => (
+      <label className="instance-search">{ui("Find accounts")}<input type="search" value={search} onChange={event=>setSearch(event.target.value)} placeholder={ui("Name or account type")}/></label>
+      <OrganizedList kind="accounts" items={accounts} collection={collection} onChange={onCollectionChange} matches={account=>`${account.username} ${account.type}`.toLowerCase().includes(search.toLowerCase())} renderItem={account=>(
             <AccountCard
               key={account.id}
               account={account}
@@ -226,14 +231,13 @@ export default function Accounts({
               onMove={onMoveAccount}
               onSelectAccount={onSelectAccount}
             />
-          ))
-        ) : (
+      )}/>
+      {!accounts.length && (
           <Card className="empty-state">
             <h3>{ui("No account signed in")}</h3>
             <p>{ui("Start the Microsoft Device Code Flow or add a local offline player.")}</p>
           </Card>
         )}
-      </div>
 
       <AccountSkinLibraryModal
         account={skinAccount}

@@ -110,6 +110,39 @@ pub struct ThemeSettings {
     pub accent_color: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LibraryOrganization {
+    pub accounts: CollectionOrganization,
+    pub instances: CollectionOrganization,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CollectionOrganization {
+    pub folders: Vec<LibraryFolder>,
+    pub placements: std::collections::HashMap<String, Placement>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryFolder { pub id: String, pub name: String }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Placement { pub folder_id: Option<String>, pub order: u32 }
+
+#[tauri::command]
+pub fn load_organization(app: AppHandle) -> Result<LibraryOrganization, String> {
+    read_json(&app, "organization.json", LibraryOrganization::default())
+}
+#[tauri::command]
+pub fn save_organization(app: AppHandle, organization: LibraryOrganization) -> Result<(), String> {
+    use std::io::Write;
+    let root = app_data_dir(&app)?;
+    let mut file = tempfile::NamedTempFile::new_in(&root).map_err(|e|e.to_string())?;
+    file.write_all(&serde_json::to_vec_pretty(&organization).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    file.as_file().sync_all().map_err(|e|e.to_string())?;
+    file.persist(root.join("organization.json")).map_err(|e|e.to_string())?;
+    Ok(())
+}
+
 pub(super) fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()

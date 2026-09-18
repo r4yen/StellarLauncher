@@ -1,4 +1,5 @@
 import { useUiText } from "../uiLanguage";
+import { LibraryOrganization } from "../models/organization";
 import { Database, Gauge, HardDrive, Users } from "lucide-react";
 import LaunchControl from "../components/LaunchControl";
 import RunningInstanceCard from "../components/RunningInstanceCard";
@@ -9,6 +10,7 @@ import { Instance, LaunchStatus, RunningInstance } from "../models/instance";
 import { LauncherStatusSummary } from "../models/settings";
 
 interface HomePageProps {
+  organization: LibraryOrganization;
   account?: Account;
   accounts: Account[];
   language: Language;
@@ -21,6 +23,7 @@ interface HomePageProps {
 }
 
 export default function HomePage({
+  organization,
   account,
   accounts,
   language,
@@ -34,6 +37,7 @@ export default function HomePage({
   return (
     <div className="page-stack">
       <LaunchControl
+        organization={organization}
         accounts={accounts}
         instances={instances}
         language={language}

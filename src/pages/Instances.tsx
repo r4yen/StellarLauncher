@@ -1,4 +1,6 @@
 import LocalizedError from "../components/LocalizedError";
+import OrganizedList from "../components/OrganizedList";
+import { CollectionOrganization } from "../models/organization";
 import { useUiText } from "../uiLanguage";
 import { FileDown, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -19,6 +21,8 @@ import { canMoveInstance } from "../services/instanceService";
 import { exportMrpack, importMrpack, selectMrpack, MrpackSelection, MrpackExportOptions } from "../services/mrpackService";
 
 interface InstancesProps {
+  collection: CollectionOrganization;
+  onCollectionChange: (collection: CollectionOrganization) => void;
   instances: Instance[];
   language: Language;
   launchStatus: LaunchStatus;
@@ -41,6 +45,7 @@ interface InstancesProps {
 }
 
 export default function Instances({
+  collection, onCollectionChange,
   instances,
   language,
   launchStatus,
@@ -133,7 +138,7 @@ export default function Instances({
     <div className="page-stack">
       <div className="page-header">
         <div>
-          <span>Stellar Launcher</span>
+          <span>StellarLauncher</span>
           <h1>{t(language, "instances")}</h1>
           <p>{de?"Deine Welten und Modpacks. Starten, verwalten und sichern.":ui("Your worlds and modpacks. Play, manage and back up.")}</p>
         </div>
@@ -147,9 +152,7 @@ export default function Instances({
       </div>
       {fileError ? <div className="error-panel"><LocalizedError message={fileError} /></div> : null}
       <label className="instance-search">{de?"Instanzen suchen":ui("Find instances")}<input type="search" value={search} onChange={event=>setSearch(event.target.value)} placeholder={de?"Name, Minecraft-Version oder Modloader":ui("Name, Minecraft version or mod loader")}/></label>
-      {instances.length > 0 ? (
-        <div className="instances-list">
-          {filtered.map((instance) => (
+      <OrganizedList kind="instances" items={instances} collection={collection} onChange={onCollectionChange} matches={instance=>filtered.some(item=>item.id===instance.id)} renderItem={instance=>(
             <InstanceCard
               key={instance.id}
               instance={instance}
@@ -170,9 +173,8 @@ export default function Instances({
               onLaunch={onLaunch}
               onStop={onStopRunningInstance}
             />
-          ))}
-        </div>
-      ) : (
+      )}/>
+      {!instances.length && (
         <Card className="empty-state">
           <h3>{de?"Noch keine Instanz":ui("No instance yet")}</h3>
           <p>{de?"Erstelle eine Instanz oder importiere ein Modpack.":ui("Create an instance or import a modpack.")}</p>

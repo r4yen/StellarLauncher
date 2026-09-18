@@ -1,8 +1,8 @@
 [package]
 name = "stellarlauncher"
 version = "1.0.4"
-description = "Stellar Launcher desktop shell"
-authors = ["Stellar Launcher"]
+description = "StellarLauncher desktop shell"
+authors = ["StellarLauncher"]
 license = ""
 repository = ""
 edition = "2021"

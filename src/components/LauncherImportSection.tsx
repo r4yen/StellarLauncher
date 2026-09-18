@@ -9,7 +9,6 @@ import { LauncherSettings } from "../models/settings";
 import { importLauncher, importLaunchers, LauncherScan, scanLauncher } from "../services/launcherImportService";
 import Button from "./ui/Button";
 import Card from "./ui/Card";
-import CustomSelect from "./ui/CustomSelect";
 
 export interface LauncherImportSectionProps {
   compact?: boolean;
@@ -68,9 +67,11 @@ export default function LauncherImportSection({ settings, disabled, onImported, 
     finally { unlisten?.(); busyRef.current = false; setBusy(false); onBusyChange(undefined); }
   };
   const available = scan?.instances.filter((item) => !item.error && !imported.includes(item.id)) ?? [];
-  const locked = busy || disabled;
+  // Browsing sources is safe even while another operation blocks copying.
+  const locked = busy;
+  const importLocked = busy || disabled;
   const controls = <fieldset disabled={locked} className="import-controls">
-    <CustomSelect placeholder="Launcher" value={launcher} onChange={(value) => { if (!locked) { setLauncher(value); setRoot(undefined); } }} options={importLaunchers.map((item) => ({ value: item.id, label: item.name }))} />
+    <select className="launcher-select" aria-label="Launcher" disabled={locked} value={launcher} onChange={(event) => {setLauncher(event.target.value);setRoot(undefined);}}>{importLaunchers.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select>
     <Button variant="secondary" icon={<FolderOpen size={16} />} title={de ? "Ordner auswählen" : ui("Choose folder")} aria-label={de ? "Ordner auswählen" : ui("Choose folder")} onClick={chooseFolder}>{compact ? undefined : de ? "Ordner auswählen" : ui("Choose folder")}</Button>
     <Button variant="ghost" icon={<RefreshCw size={16} />} title={de ? "Neu suchen" : ui("Rescan")} aria-label={de ? "Neu suchen" : ui("Rescan")} onClick={() => setRevision((value) => value + 1)} disabled={scanning}>{compact ? undefined : de ? "Neu suchen" : ui("Rescan")}</Button>
     {root && !compact && <Button variant="ghost" onClick={() => setRoot(undefined)}>{de ? "Automatisch erkennen" : ui("Detect automatically")}</Button>}
@@ -80,7 +81,8 @@ export default function LauncherImportSection({ settings, disabled, onImported, 
     <input type="checkbox" disabled={locked || !!item.error || imported.includes(item.id)} checked={selected.includes(item.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} />
     <div><strong>{item.name}</strong><small>{item.minecraftVersion} · {item.loaderType} {item.loaderVersion}</small><small className="import-path" title={item.gameDirectory}>{item.gameDirectory}</small>{item.error && <small className="import-warning"><LocalizedError message={item.error} /></small>}{imported.includes(item.id) && <small>{de ? "Importiert" : ui("Imported")}</small>}</div>
   </label>);
-  const importButton = <Button disabled={locked || !selected.length || scanning} icon={<Import size={16} />} onClick={startImport}>{de ? `Auswahl importieren (${selected.length})` : `Import selected (${selected.length})`}</Button>;
+  const importButton = <Button disabled={importLocked || !selected.length || scanning} icon={<Import size={16} />} onClick={startImport}>{de ? `Auswahl importieren (${selected.length})` : `Import selected (${selected.length})`}</Button>;
+  const blockedNotice = disabled && !busy && <p role="status" className="muted-text">{ui("You can choose a launcher and folder now. Stop running instances and wait for active operations to finish before importing.")}</p>;
   if (compact) return <div className="setup-compact-import">
     {controls}
     <div className="setup-import-location"><span title={root ?? scan?.roots.join(" · ")}>{(root ?? scan?.roots.join(" · ")) || (de ? "Automatische Pfaderkennung" : ui("Automatic path detection"))}</span>{root && <button type="button" disabled={locked} onClick={() => setRoot(undefined)}>{de ? "Automatisch" : ui("Automatic")}</button>}</div>
@@ -92,7 +94,7 @@ export default function LauncherImportSection({ settings, disabled, onImported, 
       {scan?.warnings.map((warning) => <p className="setup-import-message import-warning" key={warning}><LocalizedError message={warning} /></p>)}
       {error && <p className="setup-import-message import-error import-warning" role="alert"><LocalizedError message={error} /></p>}
     </div>
-    <div className="setup-import-submit">{importButton}{notice && <small role="status">{ui(notice)}</small>}</div>
+    <div className="setup-import-submit">{importButton}{blockedNotice}{notice && <small role="status">{ui(notice)}</small>}</div>
   </div>;
   return <Card className="launcher-import-section">
     <div><span>{de ? "Migration" : "Migration"}</span><h2>{de ? "Instanzen aus anderen Launchern" : ui("Import from other launchers")}</h2>
@@ -100,6 +102,7 @@ export default function LauncherImportSection({ settings, disabled, onImported, 
       <p className="muted-text">{de ? "Ziel:" : ui("Destination:")} {settings.gameDirectory}</p>
     </div>
     {controls}
+    {blockedNotice}
     {root && <p className="import-path">{root}</p>}
     {scan?.roots.map((path) => <p className="import-path muted-text" key={path}>{path}</p>)}
     {scanning && <p role="status">{de ? "Instanzen werden gesucht…" : ui("Looking for instances…")}</p>}

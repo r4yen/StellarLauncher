@@ -1,4 +1,5 @@
 import { useUiText } from "../uiLanguage";
+import { emptyOrganization, folderOf, LibraryOrganization, orderedItems } from "../models/organization";
 import { Play, Square } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Language, t } from "../i18n";
@@ -12,6 +13,7 @@ import Card from "./ui/Card";
 import CustomSelect from "./ui/CustomSelect";
 
 interface LaunchControlProps {
+  organization?: LibraryOrganization;
   accounts: Account[];
   instances: Instance[];
   language: Language;
@@ -20,7 +22,7 @@ interface LaunchControlProps {
   onStopRunningInstance: (runId: string) => void;
 }
 
-export default function LaunchControl({ accounts, instances, language, runningInstances, onLaunch, onStopRunningInstance }: LaunchControlProps) {
+export default function LaunchControl({ accounts, instances, language, runningInstances, onLaunch, onStopRunningInstance, organization = emptyOrganization() }: LaunchControlProps) {
   const ui = useUiText();
   const activeAccount = useMemo(() => accounts.find((account) => account.isActive) ?? accounts[0], [accounts]);
   const [instanceId, setInstanceId] = useState(instances[0]?.id ?? "");
@@ -45,7 +47,8 @@ export default function LaunchControl({ accounts, instances, language, runningIn
     selectedInstance && selectedAccount && (selectedAccount.loginStatus === "active" || selectedAccount.type === "offline")
   );
   const canRunAction = runningInstance ? Boolean(selectedInstance) : canLaunch;
-  const instanceOptions = instances.map((instance) => ({
+  const instanceOptions = [undefined,...organization.instances.folders.map(folder=>folder.id)].flatMap(folder=>orderedItems(instances,organization.instances,folder)).map((instance) => ({
+    folderId:folderOf(organization.instances,instance.id),
     value: instance.id,
     label: instance.name,
     description: runningInstances.some((running) => running.instance.id === instance.id)
@@ -55,7 +58,8 @@ export default function LaunchControl({ accounts, instances, language, runningIn
     imageAlt: ui("{name} icon", {name: instance.name}),
     color: isColorInstanceIcon(instance.icon) ? instance.icon : undefined
   }));
-  const accountOptions = accounts.map((account) => ({
+  const accountOptions = [undefined,...organization.accounts.folders.map(folder=>folder.id)].flatMap(folder=>orderedItems(accounts,organization.accounts,folder)).map((account) => ({
+    folderId:folderOf(organization.accounts,account.id),
     value: account.id,
     label: account.username,
     description: account.uuid,
@@ -74,6 +78,7 @@ export default function LaunchControl({ accounts, instances, language, runningIn
           {ui("Instance")}<CustomSelect
             disabled={instances.length === 0}
             options={instanceOptions}
+            folders={organization.instances.folders}
             placeholder={ui("No instance created")}
             value={instanceId}
             onChange={setInstanceId}
@@ -84,6 +89,7 @@ export default function LaunchControl({ accounts, instances, language, runningIn
           <CustomSelect
             disabled={accounts.length === 0}
             options={accountOptions}
+            folders={organization.accounts.folders}
             placeholder={ui("No account signed in")}
             value={accountId}
             onChange={setAccountId}

@@ -1,5 +1,5 @@
 import { useUiText } from "../uiLanguage";
-import logo from "../assets/logo.png";
+import logo from "../assets/logo.svg";
 
 interface LogoProps {
   size?: "sm" | "md" | "lg";
@@ -10,10 +10,10 @@ export default function Logo({ size = "md", showText = true }: LogoProps) {
   const ui = useUiText();
   return (
     <div className={`logo-lockup logo-${size}`}>
-      <img src={logo} alt={ui("Stellar Launcher logo")} />
+      <img src={logo} alt={ui("StellarLauncher logo")} />
       {showText ? (
         <div>
-          <strong>Stellar Launcher</strong>
+          <strong>StellarLauncher</strong>
           <span>{ui("Your launcher from the future.")}</span>
         </div>
       ) : null}

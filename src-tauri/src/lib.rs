@@ -70,6 +70,8 @@ pub fn run() {
             mods::add_mod_file,
             mods::install_modrinth_mod,
             storage::load_accounts,
+            storage::load_organization,
+            storage::save_organization,
             storage::save_accounts,
             storage::load_skin_library,
             storage::save_skin_library,
@@ -94,5 +96,5 @@ pub fn run() {
             auth::open_external_url
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run Stellar Launcher");
+        .expect("failed to run StellarLauncher");
 }

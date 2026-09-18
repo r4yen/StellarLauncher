@@ -21,7 +21,7 @@ export function buildDiscordRpcActivity(runningInstances: RunningInstance[], ena
   if (!enabled) {
     return {
       enabled: false,
-      details: "Stellar Launcher"
+      details: "StellarLauncher"
     };
   }
 

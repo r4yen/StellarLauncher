@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Stellar Launcher",
+  "productName": "StellarLauncher",
   "version": "1.0.4",
   "identifier": "app.stellarlauncher.desktop",
   "build": {
@@ -13,12 +13,13 @@
     "windows": [
       {
         "label": "main",
-        "title": "Stellar Launcher",
+        "title": "StellarLauncher",
         "width": 1280,
         "height": 820,
         "minWidth": 980,
         "minHeight": 680,
         "decorations": false,
+        "dragDropEnabled": false,
         "resizable": true,
         "maximized": true,
         "fullscreen": false
@@ -53,6 +54,10 @@
     "windows": {
       "nsis": {
         "installMode": "perMachine",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/installer-header.bmp",
+        "sidebarImage": "icons/installer-sidebar.bmp",
+        "languages": ["English", "German"],
         "displayLanguageSelector": false
       }
     },

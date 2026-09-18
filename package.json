@@ -7,6 +7,7 @@
     "setup:updater": "node scripts/setup-updater.mjs",
     "test:updater": "node --test scripts/test-auto-updater.mjs",
     "test:localization": "node --test scripts/test-localization.mjs",
+    "test:organization": "node --test scripts/test-organization.mjs",
     "dev": "vite",
     "build:frontend": "tsc && vite build",
     "build": "node scripts/build-desktop.mjs",

@@ -1,4 +1,6 @@
 import { translateUi } from "./uiTranslation";
+import { CollectionKind, CollectionOrganization, emptyOrganization } from "./models/organization";
+import { loadOrganization, saveOrganization } from "./services/organizationService";
 import LocalizedError from "./components/LocalizedError";
 import { UiLanguage } from "./uiLanguage";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -81,13 +83,16 @@ interface StartupLoadingState {
   progress: number;
 }
 
-export default function App() {
+export default function App({ initialTheme = defaultThemeSettings }: { initialTheme?: ThemeSettings }) {
   const [activePage, setActivePage] = useState<PageKey>("home");
   const [storedInstances, setStoredInstances] = useState<Instance[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [skinLibrary, setSkinLibrary] = useState<SkinLibraryItem[]>([]);
-  const [theme, setTheme] = useState<ThemeSettings>(defaultThemeSettings);
+  const [theme, setTheme] = useState<ThemeSettings>(initialTheme);
   const [settings, setSettings] = useState<LauncherSettings>(defaultLauncherSettings);
+  const [organization, setOrganization] = useState(emptyOrganization);
+  const organizationRef = useRef(organization);
+  const organizationSaveRef = useRef<Promise<unknown>>(Promise.resolve());
   const [launchStatus, setLaunchStatus] = useState<LaunchStatus>(idleStatus);
   const [runningInstances, setRunningInstances] = useState<RunningInstance[]>([]);
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
@@ -115,7 +120,7 @@ export default function App() {
   const [playtimeTick, setPlaytimeTick] = useState(Date.now());
   const [startupLoading, setStartupLoading] = useState<StartupLoadingState>({
     active: true,
-    message: "Starting Stellar Launcher",
+    message: "Starting StellarLauncher",
     progress: 0
   });
   const storedInstancesRef = useRef<Instance[]>(storedInstances);
@@ -150,6 +155,8 @@ export default function App() {
       try {
         const loadedSettings = await loadSettings(defaultLauncherSettings);
         if (mounted) setSettings(loadedSettings);
+        const loadedOrganization = await loadOrganization();
+        if (mounted) { organizationRef.current = loadedOrganization; setOrganization(loadedOrganization); }
         setLoadingStep(4, "Loading accounts");
         const loadedAccounts = await loadAccounts([]);
 
@@ -161,7 +168,6 @@ export default function App() {
         const sortedInstances = sortInstances(loadedInstances);
 
         setLoadingStep(26, "Loading theme");
-        const loadedTheme = await loadTheme(defaultThemeSettings);
 
         setLoadingStep(36, "Loading settings");
 
@@ -213,7 +219,6 @@ export default function App() {
         );
         setSkinLibrary(loadedSkinLibrary);
         setStoredInstances(sortedInstances);
-        setTheme(loadedTheme);
         setSettings(loadedSettings);
         setMinecraftCache(loadedMinecraftCache);
         setRunningInstances(loadedRunningInstances);
@@ -1254,6 +1259,12 @@ export default function App() {
     setTheme(nextTheme);
     await saveTheme(nextTheme);
   };
+  const handleOrganizationChange = (kind: CollectionKind, collection: CollectionOrganization) => {
+    const next = {...organizationRef.current, [kind]: collection};
+    organizationRef.current = next; setOrganization(next);
+    organizationSaveRef.current = organizationSaveRef.current.catch(()=>undefined).then(()=>saveOrganization(next));
+    void organizationSaveRef.current.catch(error=>setStorageError(String(error)));
+  };
 
   const handleSettingsSave = async (nextSettings: LauncherSettings) => {
     if (directoryRenameRef.current || packOperationMessage) return;
@@ -1329,6 +1340,7 @@ export default function App() {
   const pages = {
     home: (
       <HomePage
+        organization={organization}
         account={activeAccount}
         instances={storedInstances}
         accounts={accounts}
@@ -1342,6 +1354,8 @@ export default function App() {
     ),
     instances: (
       <Instances
+        collection={organization.instances}
+        onCollectionChange={collection=>handleOrganizationChange("instances",collection)}
         instances={storedInstances}
         language={settings.language}
         launchStatus={launchStatus}
@@ -1365,6 +1379,8 @@ export default function App() {
     ),
     accounts: (
       <Accounts
+        collection={organization.accounts}
+        onCollectionChange={collection=>handleOrganizationChange("accounts",collection)}
         onboarding={!settings.initialSetupCompleted}
         accounts={accounts}
         skins={skinLibrary}
@@ -1385,7 +1401,7 @@ export default function App() {
       />
     ),
     theme: <ThemeEditorPage theme={theme} onThemeChange={handleThemeChange} />,
-    settings: <SettingsPage javaSetupBusy={javaSetupBusy} javaSetupStatus={javaSetupStatus} settings={settings} onSave={handleSettingsSave} onSetupJava={handleSetupJava} onRenameGameDirectory={handleRenameGameDirectory} autoUpdateStatus={autoUpdateStatus.message} importer={importerProps} onSetupGuide={reopenSetup} setupGuideDisabled={setupGuideDisabled} onAccounts={()=>setActivePage("accounts")} />
+    settings: <SettingsPage javaSetupBusy={javaSetupBusy} javaSetupStatus={javaSetupStatus} settings={settings} onSave={handleSettingsSave} onSetupJava={handleSetupJava} onRenameGameDirectory={handleRenameGameDirectory} autoUpdateStatus={autoUpdateStatus.message} importer={importerProps} onSetupGuide={reopenSetup} setupGuideDisabled={setupGuideDisabled} />
   };
 
   return (
